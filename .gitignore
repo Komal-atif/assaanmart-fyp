@@ -216,3 +216,22 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# AssanMart local secrets and generated files
+.env.*
+!.env.example
+*.db
+temp_audio/
+frontend/node_modules/
+frontend/dist/
+# Additional AssanMart files
+.env
+.env.*
+!.env.example
+*.db
+temp_audio/
+venv/
+.venv/
+frontend/node_modules/
+frontend/dist/
+data/~$*
