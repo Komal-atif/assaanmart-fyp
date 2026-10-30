@@ -1,0 +1,147 @@
+
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 40px 20px;
+  background: #f4f9f3;
+  position: relative;
+  font-family: Arial, sans-serif;
+}
+
+.auth-back {
+  position: absolute;
+  top: 25px;
+  left: 30px;
+  border: none;
+  background: transparent;
+  color: #287c45;
+  font-size: 15px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 460px;
+  background: #ffffff;
+  padding: 40px;
+  border-radius: 18px;
+  box-shadow: 0 8px 35px rgba(0, 0, 0, 0.07);
+}
+
+.auth-logo {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.auth-logo img {
+  width: 75px;
+  height: 75px;
+  object-fit: contain;
+}
+
+.eyebrow {
+  display: block;
+  color: #32834c;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  margin-bottom: 10px;
+}
+
+.auth-card h2 {
+  color: #193b27;
+  font-size: 28px;
+  margin: 8px 0;
+}
+
+.auth-description {
+  color: #718078;
+  font-size: 14px;
+  line-height: 1.6;
+  margin-bottom: 25px;
+}
+
+.auth-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-card label {
+  color: #294333;
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.auth-card input {
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid #dce7dd;
+  border-radius: 9px;
+  outline: none;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.auth-card input:focus {
+  border-color: #399b59;
+  box-shadow: 0 0 0 3px rgba(57, 155, 89, 0.1);
+}
+
+.primary-btn.auth-submit {
+  width: 100%;
+  border: none;
+  border-radius: 9px;
+  padding: 14px;
+  margin-top: 15px;
+  background: #328c4e;
+  color: white;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.primary-btn.auth-submit:hover {
+  background: #26733e;
+}
+
+.auth-switch {
+  text-align: center;
+  margin-top: 22px;
+  color: #68776d;
+  font-size: 14px;
+}
+
+.auth-switch button {
+  border: none;
+  background: transparent;
+  color: #328c4e;
+  font-weight: 700;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.auth-error {
+  color: #d32f2f;
+  font-size: 13px;
+  margin: 5px 0;
+}
+
+@media (max-width: 500px) {
+  .auth-card {
+    padding: 25px 20px;
+  }
+
+  .auth-back {
+    top: 15px;
+    left: 15px;
+  }
+
+  .auth-card h2 {
+    font-size: 24px;
+  }
+}

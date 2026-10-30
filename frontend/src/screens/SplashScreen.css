@@ -1,0 +1,29 @@
+
+/* Signup-specific layout adjustments */
+
+.auth-page:has(.auth-form-wrap form input#signup-name) .auth-right {
+  padding-top: 25px;
+  padding-bottom: 25px;
+}
+
+.auth-page:has(.auth-form-wrap form input#signup-name) .auth-back {
+  margin-bottom: 25px;
+}
+
+.auth-page:has(.auth-form-wrap form input#signup-name) .auth-heading {
+  margin-bottom: 18px;
+}
+
+.auth-page:has(.auth-form-wrap form input#signup-name) .auth-form-wrap label {
+  margin-top: 12px;
+}
+
+.auth-page:has(.auth-form-wrap form input#signup-name) .auth-submit {
+  margin-top: 20px;
+}
+
+@media (max-width: 750px) {
+  .auth-page:has(.auth-form-wrap form input#signup-name) .auth-left {
+    min-height: 230px;
+  }
+}
