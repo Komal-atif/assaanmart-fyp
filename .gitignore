@@ -235,3 +235,7 @@ venv/
 frontend/node_modules/
 frontend/dist/
 data/~$*
+
+# Private and temporary files
+logs/
+*.log

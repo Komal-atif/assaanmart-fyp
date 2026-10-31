@@ -414,6 +414,18 @@ for _fam, _cfg in FAMILY_SHEET.items():            # spoken words kept in the da
     if _cfg["name_ur"]:
         FAMILY_UR[_fam] = _cfg["name_ur"]
 
+for _fam, _items in BY_FAMILY.items():              # Urdu name of a family the code doesn't know: its most common plain Urdu alias
+    if _fam not in FAMILY_UR:
+        _cnt = {}
+        _brands_ur = {q.get("brand_ur") for q in _items}
+        for _q in _items:
+            for _a in {x.strip() for x in re.split(r"[;,،]", _q.get("aliases", ""))}:
+                if (_a and re.search(r"[\u0600-\u06FF]", _a) and not re.search(r"[\d a-zA-Z]", _a.replace(" ", ""))
+                        and len(_a.split()) <= 2 and not any(b_ and b_ in _a for b_ in _brands_ur)):
+                    _cnt[_a] = _cnt.get(_a, 0) + 1
+        if _cnt:
+            FAMILY_UR[_fam] = max(_cnt, key=lambda a_: (_cnt[a_], -len(a_)))
+
 for _fam in BY_FAMILY:
     if _fam not in FAMILY_ALIASES:
         # still reachable: people can at least say the family's own name
@@ -545,6 +557,39 @@ def find_native(text, a):
     return m.start() if m else -1
 
 
+def _drop_explained(text, found):
+    """"apple jam": 'apple' alone would start Fruits, but the dataset has a product 'Apple Jam' that explains BOTH words,
+    so only its family counts. Same for 'tea whitener', 'chicken spread' ... (no word list needed)."""
+    allp = list(PRODUCTS.values())
+    scores = rank_products(allp, text)
+    if not scores or max(scores) <= 0:
+        return found
+    best = max(scores)
+    tops = [p for p, sc in zip(allp, scores) if sc >= best - 1e-9]
+    fams_top = {p["family"] for p in tops}
+    if len(fams_top) != 1:
+        return found
+    g = next(iter(fams_top))
+    if g not in {f for f, _ in found}:
+        return found
+    low = text.lower()
+    toks = set(_product_tokens(tops[0]))
+    keep = []
+    for fam, pt in found:
+        if fam == g:
+            keep.append((fam, pt))
+            continue
+        words = []
+        for a in FAMILY_ALIASES.get(fam, []):
+            hit = (re.search(r"(?<!\w)" + re.escape(a) + r"(?!\w)", low) if a.isascii() else find_native(text, a) >= 0)
+            if hit:
+                words += _tokens(a)
+        explained = bool(words) and all(any(_tok_strength(w, t_) >= 0.8 for t_ in toks) for w in words)
+        if not explained:
+            keep.append((fam, pt))
+    return keep
+
+
 def detect_families(text: str):
     """Returns [(family, product_type_or_None)] in the ORDER the user said them.
     'toothbrush' -> ('Oral Care', 'toothbrush')."""
@@ -597,6 +642,8 @@ def detect_families(text: str):
     if extra:                                  # keep everything in the order it was spoken
         placed = [(k, pos.get(k, 0)) for k in found] + extra
         found = [k for k, _ in sorted(placed, key=lambda kv: kv[1])]
+    if len(found) >= 2:
+        found = _drop_explained(text, found)
     return found
 
 
@@ -997,6 +1044,16 @@ def _tokens(text):
     return [w for w in re.findall(r"[\w]+", text.lower().translate(ARABIC_DIGITS)) if len(w) >= 2]
 
 
+_TIGHT = str.maketrans({"ز": "س", "ذ": "س", "ض": "س", "ظ": "س", "ث": "س", "ص": "س", "ط": "ت", "ٹ": "ت", "ق": "ک", "غ": "گ",
+                        "ں": "ن", "ڈ": "د", "ڑ": "ر", "ھ": None})
+
+
+def _tok_tight(w):
+    """Urdu spelling folded to how it SOUNDS: "کیلے" = "کیلا", "پیاس" = "پیاز" (z/s/zwad are one sound to the STT)."""
+    n = _tok_norm(w).translate(_TIGHT)
+    return re.sub("[ےیہۃ]$", "ا", n)
+
+
 @lru_cache(maxsize=200000)
 def _tok_strength(a, b):
     """How well two words match: 1.0 same word, 0.8 same consonants, 0.6 same short consonants, 0.7 very similar spelling."""
@@ -1004,6 +1061,8 @@ def _tok_strength(a, b):
     if na == nb:
         return 1.0
     if not (na.isascii() and nb.isascii()):                       # Urdu spellings differ a lot between STT runs
+        if len(na) >= 3 and _tok_tight(a) == _tok_tight(b):
+            return 0.9
         sa, sb = _tok_skel(a), _tok_skel(b)
         if sa == sb and len(sa) >= 3:
             return 0.8
@@ -1072,6 +1131,14 @@ def _tok_key(w):
     return _tok_skel(w) if not w.isascii() else w.lower()
 
 
+def _tok_keys(w):
+    """Index keys of a word: the sound-alike spelling first (precise), then the consonant skeleton."""
+    if w.isascii():
+        return [w.lower()]
+    tight = _tok_tight(w)
+    return ([("T", tight)] if len(tight) >= 3 else []) + [_tok_skel(w)]
+
+
 def build_token_index():
     global _INDEX_READY
     TOKEN_INDEX.clear()
@@ -1084,18 +1151,18 @@ def build_token_index():
         for w in words_:
             if (w.isascii() and len(w) < 3) or w.isdigit():
                 continue
-            k = _tok_key(w)
-            if len(k) >= 2:
-                TOKEN_INDEX.setdefault(k, {})
-                TOKEN_INDEX[k][p["family"]] = TOKEN_INDEX[k].get(p["family"], 0) + 1
+            for k in _tok_keys(w):
+                if len(k if isinstance(k, str) else k[1]) >= 2:
+                    TOKEN_INDEX.setdefault(k, {})
+                    TOKEN_INDEX[k][p["family"]] = TOKEN_INDEX[k].get(p["family"], 0) + 1
     for fam, words in FAMILY_ALIASES.items():           # the agent also knows each family's own spoken words
         if fam in BY_FAMILY:
             for a in words:
                 for w in _tokens(a):
-                    k = _tok_key(w)
-                    if len(k) >= 2 and not (w.isascii() and len(w) < 3):
-                        TOKEN_INDEX.setdefault(k, {})
-                        TOKEN_INDEX[k][fam] = TOKEN_INDEX[k].get(fam, 0) + 1
+                    for k in _tok_keys(w):
+                        if len(k if isinstance(k, str) else k[1]) >= 2 and not (w.isascii() and len(w) < 3):
+                            TOKEN_INDEX.setdefault(k, {})
+                            TOKEN_INDEX[k][fam] = TOKEN_INDEX[k].get(fam, 0) + 1
     _INDEX_READY = True
 
 
@@ -1106,28 +1173,36 @@ def infer_families(text, known):
         build_token_index()
     skip = set(FILLER) | set(NUM_WORDS) | set(UNIT_CANON) | _UR_STOP | set(_ONES) | set(_TENS) | _SAU
     toks = [(m_.group(), m_.start()) for m_ in re.finditer(r"[\w]+", text.lower().translate(ARABIC_DIGITS)) if len(m_.group()) >= 2]
-    score, first = {}, {}
+    score, first, sure = {}, {}, set()
 
     def add(fam, pts, at):
         score[fam] = score.get(fam, 0.0) + pts
         first[fam] = min(at, first.get(fam, at))
+    skip_sound = {_tok_tight(x) for x in (skip | {"ملی", "ملیلیٹر", "لیٹرز", "گرامز", "کلوگرام"}) if not x.isascii()}
     for i, (w, at) in enumerate(toks):
-        if w in skip or w.isdigit():
+        if w in skip or w.isdigit() or (not w.isascii() and _tok_tight(w) in skip_sound):
             continue
         # a brand said as two words ("کال گیٹ"): try the pair joined together as well
         variants = [(w, 1)]
         if i + 1 < len(toks) and not w.isascii() and not toks[i + 1][0].isascii():
             variants.append((w + toks[i + 1][0], 2))
         for cand, span in variants:
-            fams = TOKEN_INDEX.get(_tok_key(cand))
-            if not fams or len(fams) > 2 or (len(_tok_key(cand)) < 3 and not cand.isascii()):
+            fams = None
+            for k in _tok_keys(cand):                      # exact sound first, then the loose consonant skeleton
+                f_ = TOKEN_INDEX.get(k)
+                if f_ and len(f_) <= 2 and (isinstance(k, tuple) or cand.isascii() or len(k) >= 3):
+                    fams = f_
+                    break
+            if not fams:
                 continue
             for fam in fams:
                 add(fam, (1.0 if len(fams) == 1 else 0.5) * (1.0 if span == 1 else 1.2), at)
+                if len(fams) == 1:
+                    sure.add(fam)                          # at least one word that belongs to this family ONLY
     for fam in list(score):
         if fam in known or fam not in BY_FAMILY:
             score.pop(fam)
-    return [(f, first[f]) for f, sc in sorted(score.items(), key=lambda kv: first[kv[0]]) if sc >= 1.0]
+    return [(f, first[f]) for f, sc in sorted(score.items(), key=lambda kv: first[kv[0]]) if sc >= 1.0 and f in sure]
 
 
 def narrow_by_clause(variants, clause, brand):
@@ -1409,6 +1484,13 @@ async def handle_variant(utt, lang):
         return bc
     variants, shown = current["variants"], current["shown"] or current["variants"]
     full = current.get("all_variants") or variants
+    grp = item_groups(utt.both, full)                  # "I want both the potato and the tomato" -> take them one after another
+    if len(grp) >= 2:
+        first = narrow_products(full, grp[0]["text"])
+        queue_more_items((current["family"], current["ptype"]), grp[1:])
+        if len(first) == 1:
+            return select_product(lang, first[0])
+        return ask_variant(lang, first)
     hits = match_variant_rules(utt.both, variants, shown, current["brand"])
     want = size_pairs(utt.both, spoken=True)
     if full is not variants and (len(hits) != 1 or (want and not any(same_size(want, size_pairs(h["name"] + " " + h["size"])) for h in hits))):
@@ -1819,6 +1901,53 @@ def quantity_text(clause):
     return None
 
 
+SIZE_WORDS = {"small", "large", "medium", "big", "mini", "chota", "chhota", "bara", "بڑا", "بڑی", "چھوٹا", "چھوٹی",
+              "درمیانہ", "درمیانی", "regular", "family", "jumbo"}
+
+
+def item_groups(text, pool):
+    """"aloo tamatar" (no 'and' between) = TWO items: every content word that points at its own products, where
+    no product contains both words, is a separate item. -> [{"text": slice of the sentence, "n": products}] or [] / 1 item."""
+    if len(pool) < 3 or not text:
+        return []
+    skip = set(FILLER) | set(NUM_WORDS) | set(UNIT_CANON) | _UR_STOP | set(_ONES) | set(_TENS) | _SAU | SIZE_WORDS
+    ptoks = [_product_tokens(p) for p in pool]
+    found = []                                     # (start, end, frozenset of product indexes)
+    for m_ in re.finditer(r"[\w]+", text.translate(ARABIC_DIGITS)):
+        w = m_.group().lower()
+        if len(w) < 2 or w in skip or w.isdigit():
+            continue
+        hit = frozenset(i for i, ts in enumerate(ptoks) if any(_tok_strength(w, t_) >= 0.8 for t_ in ts))
+        if 0 < len(hit) < len(pool):
+            found.append((m_.start(), m_.end(), hit))
+    # keep one word per distinct product set; words whose products overlap another word belong to ONE item
+    groups = []
+    for st, en, hit in found:
+        for g in groups:
+            if g["hit"] & hit:
+                g["hit"] |= hit; g["end"] = en
+                break
+        else:
+            groups.append({"start": st, "end": en, "hit": set(hit)})
+    if len(groups) < 2:
+        return []
+    out, prev = [], 0
+    for i, g in enumerate(groups):
+        end = len(text) if i == len(groups) - 1 else g["end"]
+        out.append({"text": text[prev:end].strip(), "n": len(g["hit"])})
+        prev = g["end"]
+    return out
+
+
+def queue_more_items(pair, groups):
+    """Items 2..n said in one breath ("potato and tomato"): they come next, in the order spoken."""
+    extra = SLOTS_EXTRA.setdefault(pair, [])
+    new = [{"clause": g["text"], "qty": quantity_text(g["text"])} for g in groups]
+    extra[:0] = new
+    for _ in groups:
+        queue.insert(0, pair)
+
+
 def extract_requests(utt):
     """Every item in the sentence, in the order spoken: [{"pair": (family, type) | None, "clause", "qty"}].
     English and Urdu transcripts are read separately (like detect_for_utt) and merged."""
@@ -1831,7 +1960,11 @@ def extract_requests(utt):
                 q = quantity_text(clause) if len(fams) == 1 else None
                 if q and len(fams) == 1 and fams[0][0] in BY_FAMILY and count_as_pack(clause, BY_FAMILY[fams[0][0]]):
                     q = "1"                                    # "six eggs" = ONE pack of 6
-                items += [{"pair": pr, "clause": clause, "qty": q} for pr in fams]
+                grp = item_groups(clause, BY_FAMILY[fams[0][0]]) if len(fams) == 1 and fams[0][0] in BY_FAMILY else []
+                if grp:                                    # "aloo tamatar" = two items of the same family
+                    items += [{"pair": fams[0], "clause": g["text"], "qty": quantity_text(g["text"])} for g in grp]
+                else:
+                    items += [{"pair": pr, "clause": clause, "qty": q} for pr in fams]
             elif has_content(clause):
                 items.append({"pair": None, "clause": clause, "qty": None})     # something we don't recognise yet
         parsed.append(items)
@@ -1922,8 +2055,19 @@ def qty_display(qtext, lang):
     return fmt_qty(n) if n else ""
 
 
-def describe_request(r, lang):
-    return f"{qty_display(r['qty'], lang)} {pair_label(r['pair'], lang)}".strip()
+def describe_request(r, lang, by_item=False):
+    label = pair_label(r["pair"], lang)
+    pool = pool_for(*r["pair"]) if (by_item and r["pair"][0] in BY_FAMILY) else []
+    near = narrow_products(pool, r["clause"]) if len(pool) > 1 else []
+    if len(near) > 1 and lang == "urdu":               # two apples: say "سیب"
+        common = set(_urdu_words(near[0]))
+        for q in near[1:]:
+            common &= set(_urdu_words(q))
+        if common:
+            label = sorted(common, key=len)[0]
+    if len(near) == 1:                                 # "tomato" and "potato" are both Vegetables: name the item itself
+        label = (" ".join(_urdu_words(near[0])[:1]) or label) if lang == "urdu" else (short_name(near[0]) if len(short_name(near[0])) >= 8 else near[0]["name"])
+    return f"{qty_display(r['qty'], lang)} {label}".strip()
 
 
 # ---- change the basket by voice: "sugar hata do" / "make the soap 5" / "cheeni 3 kar do" -------------------------
@@ -2323,20 +2467,58 @@ def _urdu_size(size):
     return f"{num} {unit}"
 
 
+_GENERIC_UR = {}
+
+
+def _generic_ur(family):
+    """Urdu words that name the WHOLE family ("سبزی", "کولڈ ڈرنک", "چائے") — shared by many of its products."""
+    if family not in _GENERIC_UR:
+        items = BY_FAMILY.get(family, [])
+        count = {}
+        for q in items:
+            for a_ in {x.strip() for x in re.split(r"[;,،]", q.get("aliases", "")) if re.search(r"[\u0600-\u06FF]", x)}:
+                count[a_] = count.get(a_, 0) + 1
+        need = max(2, len(items) * 0.4)
+        _GENERIC_UR[family] = {a_ for a_, n_ in count.items() if n_ >= need} | {FAMILY_UR.get(family, "")}
+    return _GENERIC_UR[family]
+
+
+def _urdu_words(p):
+    """The specific Urdu name of a product from the aliases column ("ٹماٹر", "آلو", "سیب کالا کلو")."""
+    bu = p.get("brand_ur") or ""
+    gen = _generic_ur(p["family"])
+    out = []
+    for a_ in re.split(r"[;,،]", p.get("aliases", "")):
+        a_ = a_.strip()
+        if not a_ or re.search(r"\d", a_) or not re.search(r"[\u0600-\u06FF]", a_) or a_ in ("عام",):
+            continue
+        rest = a_.replace(bu, "").strip() if bu else a_
+        if not rest or a_ == bu or a_ in gen or rest in gen:
+            continue
+        if re.search(r"[a-zA-Z]", a_):
+            continue
+        out.append(a_)
+    return out
+
+
 def _urdu_item_name(p):
     """Spoken Urdu name of a product: brand + Urdu item word (from the aliases column) + size."""
-    urdu = [a.strip() for a in re.split(r"[;,،]", p.get("aliases", "")) if re.search(r"[\u0600-\u06FF]", a) and not re.search(r"\d", a)]
     bu = p.get("brand_ur") or ""
-    urdu = [a for a in urdu if a != bu and a != "عام"]
-    own = [a for a in urdu if bu and bu in a]
-    if not own:
-        urdu = [a for a in urdu if len(a.split()) >= 1]
-    word = min(own or urdu, key=lambda a: abs(len(a.split()) - 2)) if (own or urdu) else ""
+    words = _urdu_words(p)
+    own = [a for a in words if bu and bu in a]
     if own:                                   # the alias already contains the brand ("ڈالڈا کوکنگ آئل")
-        base = word
-    else:
-        brand = p.get("brand_ur") if p.get("brand") != "Generic" else ""
-        base = f"{brand} {word or FAMILY_UR.get(p['family'], '')}".strip()
+        base = min(own, key=lambda a: abs(len(a.split()) - 3))
+    elif words:
+        brand = bu if p.get("brand") != "Generic" else ""
+        base = f"{brand} {' '.join(words[:2])}".strip()
+    else:                                     # no specific word: "نیسکیفے کافی" (brand + what it is)
+        alias_own = [a.strip() for a in re.split(r"[;,،]", p.get("aliases", ""))
+                     if bu and bu in a and a.strip() != bu and not re.search(r"[\d a-zA-Z]", a.replace(" ", "")) and a.strip() != bu]
+        if alias_own:
+            base = min(alias_own, key=lambda a: abs(len(a.split()) - 2))
+        else:
+            brand = bu if p.get("brand") != "Generic" else ""
+            base = f"{brand} {FAMILY_UR.get(p['family'], '')}".strip()
     sz = _urdu_size(p["size"])
     return base if (not sz or sz.split()[0] in base) else f"{base} {sz}".strip()
 
@@ -2593,7 +2775,7 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
             rest = residual_utterance(utt, {r["pair"] for r in reqs})
             added = register_requests(reqs)
             if added:
-                names = join_names([describe_request(r, lang) for r in added], lang)
+                names = join_names([describe_request(r, lang, by_item=sum(1 for x in added if x["pair"] == r["pair"]) > 1) for r in added], lang)
                 pre = t(lang, f"Okay, I'll also get {names} after this. ", f"ٹھیک ہے، اس کے بعد {names} بھی لیں گے۔ ")
             if rest is None or not looks_like_answer(rest):
                 d, s_ = current_question(lang)
@@ -2628,7 +2810,7 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
         if missing:
             pre += t(lang, f"Sorry, we don't have {', '.join(missing)}. ", f"معذرت، {'، '.join(missing)} دستیاب نہیں۔ ")
         if added and (len(added) > 1 or any(r["qty"] for r in added)):     # say back what was understood, once
-            ack = join_names([describe_request(r, lang) for r in added], lang)
+            ack = join_names([describe_request(r, lang, by_item=sum(1 for x in added if x["pair"] == r["pair"]) > 1) for r in added], lang)
             pre += t(lang, f"Got it: {ack}. ", f"ٹھیک ہے: {ack}۔ ")
         if step:
             return pre + step[0], pre + step[1]
