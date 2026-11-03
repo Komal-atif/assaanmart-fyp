@@ -1,0 +1,350 @@
+/* ==================================================================
+   Dashboard.cards.css
+   Import AFTER Dashboard.css (already done in Dashboard.jsx).
+   1. Sticky header   2. Skin section / white cards   3. Card design
+   4. Add-to-cart animation (bar morph + flying photo + cart bump)
+   ================================================================== */
+
+.dashboard-page {
+  --skin: #efe7d6;          /* the beige from your header / old cards */
+  --card: #ffffff;
+  --ink: #1d3a33;           /* dark green text */
+  --muted: #8a948f;
+  --add: #b7ed7c;           /* lime of the quantity bar (same as the reference) */
+  --add-ink: #174a2b;       /* dark green ring / number */
+  --bar: #f1eee3;           /* pale "+" bar */
+}
+
+/* ------------------------------------------------------------------ */
+/* 1. Sticky header                                                    */
+/* ------------------------------------------------------------------ */
+
+/* `overflow: hidden` on any ancestor silently kills position: sticky.
+   `clip` hides sideways overflow without creating a scroll container. */
+html,
+body {
+  overflow-x: clip;
+}
+.dashboard-page {
+  overflow: visible !important;
+  overflow-x: clip !important;
+}
+
+.dashboard-page .db-nav {
+  position: sticky;
+  top: 0;
+  z-index: 120;
+  background: var(--skin) !important;   /* fully solid: nothing shows through while scrolling */
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  transition: box-shadow 0.3s ease;
+}
+.dashboard-page .db-nav.scrolled {
+  box-shadow: 0 10px 26px -14px rgba(29, 58, 51, 0.38);
+}
+
+/* anchors (Home / Categories / Popular / Deals) shouldn't hide under the sticky bar */
+.dashboard-page [id^="db-"] {
+  scroll-margin-top: 90px;
+}
+
+/* ------------------------------------------------------------------ */
+/* 2. Skin section behind white cards                                  */
+/* ------------------------------------------------------------------ */
+
+.dashboard-page .db-sec.skin,
+.dashboard-page .db-results {
+  background: var(--skin) !important;
+}
+
+/* 9 categories now (was 7) — let them wrap instead of squeezing */
+.dashboard-page .db-cat-row {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 22px 14px;
+}
+
+/* ------------------------------------------------------------------ */
+/* 3. Product card  (flat white card, curved bottom — like the reference) */
+/* ------------------------------------------------------------------ */
+
+.dashboard-page .db-gcard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  min-width: 0;
+  height: 100%;
+  padding: 24px 6.5% 22px;
+  background: var(--card);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  clip-path: url(#gCardShape);          /* rounded top + arched bottom */
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.dashboard-page .db-gcard:hover {
+  transform: translateY(-5px);
+}
+
+/* results page: 5 cards across on wide screens like the reference */
+.dashboard-page .db-results .db-grid-4 {
+  grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
+  gap: 22px;
+}
+
+/* photo — big, no box, sits straight on the white card */
+.dashboard-page .db-gimg {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1 / 0.8;
+  background: transparent;
+}
+.dashboard-page .db-gimg img {
+  max-width: 92%;
+  max-height: 100%;
+  object-fit: contain;
+  transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.dashboard-page .db-gimg .db-emoji {
+  font-size: 72px;
+  line-height: 1;
+}
+.dashboard-page .db-gcard:hover .db-gimg img,
+.dashboard-page .db-gcard:hover .db-gimg .db-emoji {
+  transform: scale(1.06);
+}
+
+.dashboard-page .db-gcard h3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  width: 100%;
+  min-height: 2.8em;
+  margin: 26px 0 8px;
+  color: #102827;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.dashboard-page .db-gsize {
+  color: #aaaaac;
+  font-size: 14px;
+}
+
+.dashboard-page .db-gprice-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin: 12px 0 18px;
+}
+.dashboard-page .db-gprice {
+  color: #0c2a2a;
+  font-size: clamp(26px, 2.1vw, 34px);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  white-space: nowrap;
+}
+.dashboard-page .db-gprice sup {
+  margin-left: -1px;
+  font-size: 0.5em;
+  font-weight: 800;
+  letter-spacing: 0;
+  vertical-align: 0.95em;
+}
+.dashboard-page .db-gna {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.dashboard-page .db-gtag {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 99px;
+  background: #fde8ea;
+  color: #c4434f;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.dashboard-page .db-gcard.is-out .db-gimg img,
+.dashboard-page .db-gcard.is-out .db-gimg .db-emoji {
+  opacity: 0.38;
+  filter: grayscale(1);
+}
+
+/* ------------------------------------------------------------------ */
+/* 4. Add bar  +  quantity stepper  +  animations                      */
+/* ------------------------------------------------------------------ */
+
+.dashboard-page .db-gaction {
+  width: 100%;
+  margin-top: auto;
+}
+
+/* pale "+" banner — top edge dips in, bottom edge bulges out */
+.dashboard-page .db-gadd {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 60px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--bar);
+  color: #102827;
+  cursor: pointer;
+  clip-path: url(#gBarShape);
+  transition: background 0.25s ease, transform 0.15s ease;
+}
+.dashboard-page .db-gadd svg {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.dashboard-page .db-gadd:hover:not(:disabled) {
+  background: var(--add);
+}
+.dashboard-page .db-gadd:hover:not(:disabled) svg {
+  transform: rotate(90deg) scale(1.1);
+}
+.dashboard-page .db-gadd:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.dashboard-page .db-gadd:disabled {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: not-allowed;
+}
+
+/* lime "( − )  1  ( + )" banner — the "+" bar morphs into this with a springy pop */
+.dashboard-page .db-gqty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 60px;
+  padding: 0 12px;
+  background: var(--add);
+  color: var(--add-ink);
+  clip-path: url(#gBarShape);
+  transform-origin: 50% 100%;
+  animation: gBarIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.dashboard-page .db-gqty button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1.8px solid var(--add-ink);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--add-ink);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.15s ease;
+}
+.dashboard-page .db-gqty button:hover {
+  background: var(--add-ink);
+  color: var(--add);
+}
+.dashboard-page .db-gqty button:active {
+  transform: scale(0.85);
+}
+.dashboard-page .db-gqty span {
+  min-width: 30px;
+  font-size: 22px;
+  font-weight: 800;
+  animation: gNum 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes gBarIn {
+  0%   { transform: scaleX(0.45) scaleY(0.7); opacity: 0; }
+  55%  { transform: scaleX(1.05) scaleY(1.12); opacity: 1; }
+  100% { transform: none; }
+}
+@keyframes gNum {
+  0%   { transform: translateY(8px) scale(0.6); opacity: 0; }
+  100% { transform: none; opacity: 1; }
+}
+
+/* the product photo lifts off the card and flies into the header cart.
+   Two nested elements: outer moves on Y, inner on X with a different
+   easing, so the path is a smooth arc instead of a straight line. */
+.dashboard-page .db-gfly,
+.db-gfly {
+  position: fixed;
+  z-index: 400;
+  pointer-events: none;
+  animation: gFlyY 0.75s cubic-bezier(0.2, 0.75, 0.4, 1) forwards;
+}
+.db-gfly i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  font-style: normal;
+  filter: drop-shadow(0 10px 14px rgba(29, 58, 51, 0.3));
+  animation: gFlyX 0.75s cubic-bezier(0.55, 0, 0.8, 0.55) forwards;
+}
+.db-gfly img,
+.db-gfly .db-emoji {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  font-size: 48px;
+  line-height: 1;
+  text-align: center;
+}
+@keyframes gFlyY {
+  to { transform: translateY(var(--dy)); }
+}
+@keyframes gFlyX {
+  0%   { transform: translateX(0) scale(1) rotate(0); opacity: 1; }
+  25%  { transform: translateX(calc(var(--dx) * 0.08)) scale(1.18) rotate(-6deg); opacity: 1; }
+  100% { transform: translateX(var(--dx)) scale(0.16) rotate(20deg); opacity: 0.25; }
+}
+
+/* cart icon bumps when the photo lands */
+.dashboard-page .db-cart-ico {
+  display: inline-flex;
+}
+.dashboard-page .db-cart-ico.hit {
+  animation: gCartHit 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes gCartHit {
+  0%   { transform: scale(1) rotate(0); }
+  35%  { transform: scale(1.35) rotate(-12deg); }
+  70%  { transform: scale(0.92) rotate(6deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+/* ------------------------------------------------------------------ */
+/* Responsive                                                          */
+/* ------------------------------------------------------------------ */
+
+@media (max-width: 720px) {
+  .dashboard-page .db-results .db-grid-4 { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .dashboard-page .db-gcard { padding: 16px 8px 14px; }
+  .dashboard-page .db-gcard h3 { margin-top: 14px; font-size: 13px; }
+  .dashboard-page .db-gsize { font-size: 12px; }
+  .dashboard-page .db-gprice { font-size: 22px; }
+  .dashboard-page .db-gadd,
+  .dashboard-page .db-gqty { height: 48px; }
+  .dashboard-page .db-gqty { padding: 0 8px; }
+  .dashboard-page .db-gqty button { width: 30px; height: 30px; }
+  .dashboard-page .db-gqty span { font-size: 18px; }
+  .dashboard-page [id^="db-"] { scroll-margin-top: 72px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .db-gfly, .db-gfly i, .dashboard-page .db-gqty, .dashboard-page .db-cart-ico.hit { animation-duration: 0.01s; }
+}
