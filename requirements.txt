@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-dotenv
+sqlalchemy
+python-multipart
+deepgram-sdk
+edge-tts
+google-genai
+httpx
