@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 84" width="250" height="84">
+  <!-- PLACEHOLDER logo. Replace this file with the real AssanMart logo (same name, e.g. logo.svg or logo.png via src/config.js). -->
+  <g transform="translate(2 6)">
+    <rect width="56" height="56" rx="16" fill="#1f5c3a"/>
+    <path d="M12 23h32l-3.5 17.5a3.5 3.5 0 0 1-3.4 2.8H18.9a3.5 3.5 0 0 1-3.4-2.8Z" fill="#fff"/>
+    <path d="M19 23c0-7 3.5-11.500 9-11.500s9 4.500 9 11.500" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+    <path d="M28 35c-4.500-1-6.500-4.500-5.500-8 4.500 0 7 2.700 5.500 8Z" fill="#6bbb5c"/>
+    <circle cx="39" cy="13" r="5.500" fill="#f0a63a"/>
+  </g>
+  <text x="70" y="44" font-family="'Plus Jakarta Sans','Segoe UI',Arial,sans-serif" font-size="34" font-weight="800" letter-spacing="-1" fill="#1f5c3a">Assan<tspan fill="#3a9a63">Mart</tspan></text>
+  <text x="72" y="64" font-family="'Plus Jakarta Sans','Segoe UI',Arial,sans-serif" font-size="11.500" font-weight="600" letter-spacing="1.600" fill="#6a8174">Voice · Shop · Fresh</text>
+</svg>
