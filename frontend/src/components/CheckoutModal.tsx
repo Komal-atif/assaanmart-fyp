@@ -1,0 +1,444 @@
+import React, { useEffect, useState } from 'react';
+import { X, CheckCircle, Truck, CreditCard, Banknote, ShieldCheck, MapPin, Phone, User as UserIcon, LocateFixed, Loader2 } from 'lucide-react';
+import confetti from 'canvas-confetti';
+import { CartItem, Order, User } from '../types';
+import { placeWebOrder, fetchProfile } from '../services/orderApi';
+
+interface CheckoutModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  cart: CartItem[];
+  user: User | null;
+  onOrderSuccess: (order: Order) => void;
+}
+
+const CITIES = [
+  'Karachi',
+  'Lahore',
+  'Islamabad',
+  'Rawalpindi',
+  'Faisalabad',
+  'Multan',
+  'Peshawar',
+  'Quetta',
+  'Sialkot',
+  'Gujranwala',
+];
+
+export const CheckoutModal: React.FC<CheckoutModalProps> = ({
+  isOpen,
+  onClose,
+  cart,
+  user,
+  onOrderSuccess,
+}) => {
+  const [name, setName] = useState(user?.name || '');
+  const [phone, setPhone] = useState(user?.phone || '');
+  const [address, setAddress] = useState(user?.address || '');
+  const [city, setCity] = useState(CITIES[0]);
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [locError, setLocError] = useState('');
+  const [savedNote, setSavedNote] = useState(false);
+  const paymentMethod = 'cod'; // Cash on Delivery is the only payment method
+  const [deliverySlot, setDeliverySlot] = useState('Express (30-45 mins)');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [completedOrder, setCompletedOrder] = useState<Order | null>(null);
+  const [submitError, setSubmitError] = useState('');
+
+  // Delivery details the customer gave before come back filled in: they only have to confirm them.
+  useEffect(() => {
+    if (!isOpen) return;
+    let alive = true;
+    fetchProfile().then((p) => {
+      if (!alive || !p) return;
+      if (p.name) setName(p.name);
+      if (p.phone) setPhone(p.phone);
+      if (p.address) setAddress(p.address);
+      if (p.city) setCity(p.city);
+      if (p.lat != null && p.lng != null) setCoords({ lat: p.lat, lng: p.lng });
+      if (p.address) setSavedNote(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [isOpen]);
+
+  // "Use my current location": the browser gives the position, OpenStreetMap turns it into an address.
+  const useMyLocation = () => {
+    setLocError('');
+    if (!navigator.geolocation) {
+      setLocError('Your browser cannot share its location.');
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude: lat, longitude: lng } = pos.coords;
+        setCoords({ lat, lng });
+        try {
+          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&lat=${lat}&lon=${lng}`);
+          const d = await r.json();
+          const a = d.address || {};
+          const line = [a.house_number, a.road, a.neighbourhood || a.suburb || a.quarter].filter(Boolean).join(', ');
+          setAddress(line || d.display_name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+          const c = a.city || a.town || a.village || a.state_district || a.county || '';
+          const hit = CITIES.find((x) => c.toLowerCase().includes(x.toLowerCase()) || x.toLowerCase().includes(c.toLowerCase()));
+          if (hit) setCity(hit);
+          else if (c) setCity(c);
+        } catch {
+          setAddress(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+        } finally {
+          setLocating(false);
+        }
+      },
+      (err) => {
+        setLocating(false);
+        setLocError(err.code === 1 ? 'Location permission was blocked. Allow it in the browser, or type your address.' : "Couldn't get your location. Please type your address.");
+      },
+      { enableHighAccuracy: true, timeout: 12000 }
+    );
+  };
+
+  if (!isOpen) return null;
+
+  const subtotal = cart.reduce((sum, item) => sum + (item.price || 0) * item.quantity, 0);
+  const deliveryFee = subtotal >= 2000 ? 0 : 150;
+  const grandTotal = subtotal + deliveryFee;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !phone.trim() || !address.trim()) {
+      alert('Please fill out all required delivery fields.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitError('');
+
+    const paymentLabel = 'Cash on Delivery';
+
+    try {
+      // The server saves the order (and re-checks the prices) before we show "confirmed".
+      const placed = await placeWebOrder({
+        items: cart.map((i) => ({ id: i.id, quantity: i.quantity })),
+        customer_name: name,
+        phone,
+        address,
+        city,
+        payment_method: paymentLabel,
+        delivery_slot: deliverySlot,
+        lat: coords?.lat ?? null,
+        lng: coords?.lng ?? null,
+      });
+
+      const order: Order = {
+        id: `AM-${placed.order_id}`,
+        date: new Date().toLocaleDateString('en-PK', {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+        items: [...cart],
+        subtotal: placed.subtotal,
+        deliveryFee: placed.delivery_fee,
+        total: placed.total,
+        customerName: name,
+        phone,
+        address,
+        city,
+        paymentMethod: paymentLabel,
+        status: 'Confirmed',
+      };
+
+      setCompletedOrder(order);
+      onOrderSuccess(order);
+
+      confetti({
+        particleCount: 80,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ['#10b981', '#059669', '#34d399', '#f59e0b'],
+      });
+    } catch (err: any) {
+      setSubmitError(
+        err?.message && !/HTTP|Failed to fetch/i.test(err.message)
+          ? err.message
+          : "We couldn't place your order. Please check that the AssanMart server is running and try again."
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
+      <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[92vh]">
+        
+        {/* Modal Header */}
+        <div className="p-5 px-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+          <div>
+            <h3 className="text-lg font-black text-slate-900">
+              {completedOrder ? 'Order Confirmed 🎉' : 'Checkout & Confirm Order'}
+            </h3>
+            <p className="text-xs text-slate-500">
+              {completedOrder
+                ? 'Your groceries are being prepared with care'
+                : 'Confirm your delivery address and payment'}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Modal Content */}
+        <div className="p-6 overflow-y-auto space-y-6">
+          {completedOrder ? (
+            /* Order Success State / Receipt */
+            <div className="text-center space-y-6 py-4 animate-in zoom-in-95 duration-300">
+              <div className="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-inner">
+                <CheckCircle className="w-10 h-10" />
+              </div>
+
+              <div>
+                <h4 className="text-2xl font-black text-slate-900">
+                  Shukriya, {completedOrder.customerName}!
+                </h4>
+                <p className="text-sm text-slate-600 mt-1 max-w-md mx-auto">
+                  Your order <strong className="text-emerald-700">#{completedOrder.id}</strong> has been received and confirmed. Our delivery rider will reach your address in {completedOrder.city}.
+                </p>
+              </div>
+
+              {/* Receipt Summary Card */}
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-5 text-left text-xs space-y-3 max-w-lg mx-auto">
+                <div className="flex justify-between border-b border-slate-200 pb-2">
+                  <span className="text-slate-500 font-semibold">Order ID</span>
+                  <span className="font-bold text-slate-900">{completedOrder.id}</span>
+                </div>
+                <div className="flex justify-between border-b border-slate-200 pb-2">
+                  <span className="text-slate-500 font-semibold">Delivery Address</span>
+                  <span className="font-semibold text-slate-900 text-right max-w-xs truncate">
+                    {completedOrder.address}, {completedOrder.city}
+                  </span>
+                </div>
+                <div className="flex justify-between border-b border-slate-200 pb-2">
+                  <span className="text-slate-500 font-semibold">Contact Phone</span>
+                  <span className="font-semibold text-slate-900">{completedOrder.phone}</span>
+                </div>
+                <div className="flex justify-between border-b border-slate-200 pb-2">
+                  <span className="text-slate-500 font-semibold">Payment</span>
+                  <span className="font-semibold text-emerald-700">{completedOrder.paymentMethod}</span>
+                </div>
+                <div className="flex justify-between border-b border-slate-200 pb-2">
+                  <span className="text-slate-500 font-semibold">Items ({completedOrder.items.length})</span>
+                  <span className="font-semibold text-slate-900">
+                    {completedOrder.items.map((i) => `${i.name} (x${i.quantity})`).slice(0, 3).join(', ')}
+                    {completedOrder.items.length > 3 && '...'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm font-black text-slate-900 pt-1">
+                  <span>Total Amount Paid / Payable</span>
+                  <span className="text-emerald-700 font-sans">PKR {completedOrder.total.toLocaleString()}</span>
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  onClick={onClose}
+                  className="px-8 py-3 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md shadow-emerald-600/30 transition-all cursor-pointer"
+                >
+                  Continue Shopping
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* Checkout Form */
+            <form onSubmit={handleSubmit} className="space-y-6">
+              
+              {/* Delivery Details */}
+              <div className="space-y-4">
+                <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-emerald-600" />
+                  Delivery Information
+                </h4>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-semibold text-slate-600 block mb-1">
+                      Full Name *
+                    </label>
+                    <div className="relative">
+                      <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Komal Atif"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-emerald-500 focus:outline-hidden"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-slate-600 block mb-1">
+                      Phone Number *
+                    </label>
+                    <div className="relative">
+                      <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                      <input
+                        type="tel"
+                        required
+                        placeholder="0300-1234567"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-emerald-500 focus:outline-hidden"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={useMyLocation}
+                    disabled={locating}
+                    className="px-3 py-2 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-bold flex items-center gap-1.5 hover:bg-emerald-100 cursor-pointer disabled:opacity-60"
+                  >
+                    {locating ? <Loader2 className="w-4 h-4 animate-spin" /> : <LocateFixed className="w-4 h-4" />}
+                    {locating ? 'Finding you…' : 'Use my current location'}
+                  </button>
+                  {savedNote && <span className="text-[11px] text-slate-500">Your saved delivery details are filled in — please confirm them.</span>}
+                  {locError && <span className="text-[11px] text-amber-600">{locError}</span>}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="sm:col-span-2">
+                    <label className="text-xs font-semibold text-slate-600 block mb-1">
+                      Street Address &amp; House Number *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Flat 4B, Al-Noor Heights, Gulshan"
+                      value={address}
+                      onChange={(e) => setAddress(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-emerald-500 focus:outline-hidden"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-slate-600 block mb-1">
+                      City *
+                    </label>
+                    <select
+                      value={city}
+                      onChange={(e) => setCity(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-emerald-500 focus:outline-hidden cursor-pointer"
+                    >
+                      {(CITIES.includes(city) ? CITIES : [city, ...CITIES]).map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Delivery Timing Slot */}
+              <div className="space-y-3 pt-2 border-t border-slate-100">
+                <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Truck className="w-4 h-4 text-emerald-600" />
+                  Select Delivery Slot
+                </h4>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    { slot: 'Express (30-45 mins)', note: 'Fastest delivery' },
+                    { slot: 'Evening (6 PM - 9 PM)', note: 'Today evening' },
+                    { slot: 'Morning (9 AM - 12 PM)', note: 'Tomorrow morning' },
+                  ].map((s) => (
+                    <button
+                      key={s.slot}
+                      type="button"
+                      onClick={() => setDeliverySlot(s.slot)}
+                      className={`p-3 rounded-xl border text-left cursor-pointer transition-all ${
+                        deliverySlot === s.slot
+                          ? 'border-emerald-500 bg-emerald-50/70 text-emerald-950 ring-2 ring-emerald-500/20'
+                          : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
+                      }`}
+                    >
+                      <p className="text-xs font-bold leading-tight">{s.slot}</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">{s.note}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Payment Methods */}
+              <div className="space-y-3 pt-2 border-t border-slate-100">
+                <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-emerald-600" />
+                  Payment Method
+                </h4>
+
+                <div className="p-3 rounded-xl border border-emerald-500 bg-emerald-50/70 text-emerald-950 ring-2 ring-emerald-500/20 flex items-center gap-3">
+                  <Banknote className="w-6 h-6 text-emerald-700 shrink-0" />
+                  <div>
+                    <p className="text-xs font-bold">Cash on Delivery</p>
+                    <p className="text-[11px] text-slate-500">Pay cash at your doorstep</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Order Final Summary */}
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 text-xs space-y-2">
+                <div className="flex justify-between text-slate-600">
+                  <span>Subtotal ({cart.length} unique items)</span>
+                  <span className="font-semibold text-slate-900">PKR {subtotal.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between text-slate-600">
+                  <span>Delivery Fee</span>
+                  <span className="font-semibold text-slate-900">
+                    {deliveryFee === 0 ? <span className="text-emerald-700 font-bold">FREE</span> : `PKR ${deliveryFee}`}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm font-black text-slate-900 pt-2 border-t border-slate-200">
+                  <span>Payable Amount</span>
+                  <span className="text-emerald-700 text-base font-sans">PKR {grandTotal.toLocaleString()}</span>
+                </div>
+              </div>
+
+              {submitError && (
+                <p className="text-xs font-semibold text-red-600 bg-red-50 border border-red-100 rounded-xl p-3">{submitError}</p>
+              )}
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full py-3.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm shadow-md shadow-emerald-600/30 transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  {isSubmitting ? (
+                    <span>Placing order...</span>
+                  ) : (
+                    <span>Confirm &amp; Place Order · PKR {grandTotal.toLocaleString()}</span>
+                  )}
+                </button>
+              </div>
+
+            </form>
+          )}
+        </div>
+
+      </div>
+    </div>
+  );
+};

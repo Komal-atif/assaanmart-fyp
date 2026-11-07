@@ -1,0 +1,7 @@
+{
+  "name": "AssanMart - Smart Voice & Online Grocery Store",
+  "description": "AssanMart is Pakistan's premier voice-first and online grocery platform, offering fresh produce, daily commodities, and express delivery in English and Urdu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

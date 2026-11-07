@@ -1,0 +1,34 @@
+# Secrets
+.env*
+!.env.example
+
+# Database and local learned data
+*.db
+*.sqlite
+*.sqlite3
+backend/learned_aliases.json
+
+# Node.js
+node_modules/
+**/node_modules/
+dist/
+build/
+coverage/
+
+# Python
+venv/
+.venv/
+**/venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Runtime files
+backend/logs/
+backend/temp_audio/
+*.log
+
+# Other
+.DS_Store
+complete-structure.txt
