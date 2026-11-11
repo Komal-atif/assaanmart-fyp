@@ -1,0 +1,57 @@
+
+/* Mobile and Tablet Responsive Design */
+
+@media (max-width: 768px) {
+
+  /* Prevent horizontal scrolling */
+  body {
+    overflow-x: hidden;
+  }
+
+  /* Product grid */
+  .product-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  /* Images */
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* Headings */
+  h1 {
+    font-size: 24px;
+  }
+
+  /* Buttons */
+  button {
+    max-width: 100%;
+  }
+}
+
+/* Small mobile screens */
+@media (max-width: 480px) {
+
+  h1 {
+    font-size: 21px;
+  }
+
+  .product-grid {
+    gap: 8px;
+  }
+}
+
+@media (max-width: 768px) {
+  .db-gimg {
+    aspect-ratio: 1 / 1;
+    height: auto;
+  }
+
+  .db-gimg img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+}

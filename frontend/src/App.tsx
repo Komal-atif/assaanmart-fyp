@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { CardShapes } from './components/CardShapes';
 import { Header } from './components/Header';
-import { LandingPage } from './components/LandingPage';
+import './responsive.css';
+import  LandingPage  from './components/LandingPage';
 import { StoreDashboard } from './components/StoreDashboard';
 import { Footer } from './components/Footer';
 import { CartDrawer } from './components/CartDrawer';
@@ -571,11 +572,13 @@ export default function App() {
       )}
 
       {/* Product Detail Modal */}
-      <ProductDetailModal
-        product={selectedProductDetail}
-        onClose={() => setSelectedProductDetail(null)}
-        onAddToCart={handleAddMultiple}
-      />
+      {/* Product Detail Modal */}
+<ProductDetailModal
+  key={selectedProductDetail?.id ?? 'no-product'}
+  product={selectedProductDetail}
+  onClose={() => setSelectedProductDetail(null)}
+  onAddToCart={handleAddMultiple}
+/>
 
       {/* Checkout Modal */}
       <CheckoutModal
