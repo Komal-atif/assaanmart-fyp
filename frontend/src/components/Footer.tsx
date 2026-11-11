@@ -33,7 +33,7 @@ export const Footer: React.FC<FooterProps> = ({
         <div className="md:col-span-5 space-y-4 text-left">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-white p-1 flex items-center justify-center border border-[#d1fae5] shadow-xs">
-              <img src="/mascot.png" alt="AssanMart" className="w-full h-full object-contain" />
+              <img src="/logo.png" alt="AssanMart" className="w-full h-full object-contain" />
             </div>
             <span className="text-2xl font-black text-[#064e3b]">
               Assan<span className="text-[#059669]">Mart</span>

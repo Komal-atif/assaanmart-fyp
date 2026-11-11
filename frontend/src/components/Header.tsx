@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Search, ShoppingCart, Mic, X, User as UserIcon, Store, Camera } from 'lucide-react';
+import { Search, ShoppingCart, Mic, X, User as UserIcon, Store, Camera, Heart } from 'lucide-react';
 import { User, Product } from '../types';
+import { AnimatedBrand } from './AnimatedBrand';
 
 interface HeaderProps {
   currentView: 'landing' | 'dashboard';
@@ -19,7 +20,11 @@ interface HeaderProps {
   products: Product[];
   onSelectProduct: (product: Product) => void;
   cartHit: number;
+  favoritesCount?: number;
+  onOpenFavorites?: () => void;
   cartBtnRef: React.RefObject<HTMLButtonElement | null>;
+  /** change this number to replay the logo intro (page change / modal closed) */
+  logoPlayKey?: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -38,7 +43,10 @@ export const Header: React.FC<HeaderProps> = ({
   products,
   onSelectProduct,
   cartHit,
+  favoritesCount = 0,
+  onOpenFavorites,
   cartBtnRef,
+  logoPlayKey = 0,
 }) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
@@ -85,19 +93,7 @@ export const Header: React.FC<HeaderProps> = ({
               }}
               className="flex items-center gap-2 text-left cursor-pointer shrink-0"
             >
-              <div className="w-8 h-8 rounded-full bg-[#f0fdf4] border border-[#a7f3d0] p-1 flex items-center justify-center">
-                <img
-                  src="/mascot.png"
-                  alt="AssanMart"
-                  className="w-full h-full object-contain"
-                  onError={(e) => {
-                    e.currentTarget.style.display = 'none';
-                  }}
-                />
-              </div>
-              <span className="text-lg font-black tracking-tight text-[#064e3b]">
-                Assan<span className="text-[#059669]">Mart</span>
-              </span>
+              <AnimatedBrand playKey={logoPlayKey} />
             </button>
 
             {/* Single line tag: Smart Voice Online Groceries */}
@@ -233,6 +229,21 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="hidden sm:inline">Sign In</span>
               </button>
             )}
+
+            {/* Favourites */}
+            <button
+              onClick={onOpenFavorites}
+              className="relative p-2 rounded-full bg-white border border-[#d1fae5] text-rose-500 hover:bg-rose-50 transition-all cursor-pointer active:scale-95"
+              aria-label="My favourites"
+              title="My favourites"
+            >
+              <Heart className={`w-4 h-4 ${favoritesCount > 0 ? 'fill-rose-500' : ''}`} />
+              {favoritesCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white font-black text-[10px] min-w-4 h-4 rounded-full flex items-center justify-center px-1 shadow-xs border border-white">
+                  {favoritesCount}
+                </span>
+              )}
+            </button>
 
             {/* Cart Button */}
             <button

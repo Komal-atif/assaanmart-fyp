@@ -198,12 +198,12 @@ export const getVoiceCart = async () =>
 
 // ---- photo scanner by voice ----
 export interface ScanVoiceOption { id?: number; name: string; brand: string; size: string }
-export interface ScanVoiceReply { heard: string; action: 'pick' | 'skip' | 'back' | 'more' | 'yes' | 'no' | 'review' | 'qty' | null; index?: number; value?: number }
+export interface ScanVoiceReply { heard: string; action: 'pick' | 'skip' | 'back' | 'more' | 'yes' | 'no' | 'review' | 'qty' | 'ambiguous' | 'checkout' | 'browse' | null; index?: number; indices?: number[]; value?: number }
 
 export const scanSay = async (text: string, lang: 'english' | 'urdu') =>
   handle<{ audio_url: string | null }>(await post('/scan/say', { text, lang }), '/scan/say');
 
-export async function scanReply(audioBlob: Blob, context: 'detected' | 'pick' | 'summary' | 'qty', lang: 'english' | 'urdu', options: ScanVoiceOption[]) {
+export async function scanReply(audioBlob: Blob, context: 'detected' | 'pick' | 'summary' | 'qty' | 'next', lang: 'english' | 'urdu', options: ScanVoiceOption[]) {
   const fd = new FormData();
   fd.append('audio', audioBlob, `speech.${audioBlob.type.includes('mp4') ? 'mp4' : 'webm'}`);
   fd.append('context', context);

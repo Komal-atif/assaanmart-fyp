@@ -8,7 +8,13 @@ interface ProductCardProps {
   onAddToCart: (product: Product, eventElement: HTMLElement) => void;
   onChangeQuantity: (productId: string, delta: number) => void;
   onQuickView: (product: Product) => void;
+  /** favourites live in App (shared with the header and the dashboard); without them the heart works on this card only */
+  isFavorite?: boolean;
+  onToggleFavorite?: (product: Product) => void;
 }
+
+// the "Fresh" badge belongs to fruits and vegetables only
+const isFreshProduce = (p: Product) => /fruit|veg/i.test(`${p.category || ''} ${p.subcategory || ''}`);
 
 export const ProductCard: React.FC<ProductCardProps> = ({
   product,
@@ -16,9 +22,13 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onAddToCart,
   onChangeQuantity,
   onQuickView,
+  isFavorite,
+  onToggleFavorite,
 }) => {
   const [imageError, setImageError] = useState(false);
-  const [isWishlisted, setIsWishlisted] = useState(false);
+  const [localWish, setLocalWish] = useState(false);
+  const isWishlisted = isFavorite ?? localWish;
+  const toggleWish = () => (onToggleFavorite ? onToggleFavorite(product) : setLocalWish((v) => !v));
   const isOutOfStock = product.stock === 0;
   const isPriceUnavailable = product.price == null;
 
@@ -75,7 +85,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-[9.5px] font-bold shadow-2xs">
               Out of stock
             </span>
-          ) : (
+          ) : isFreshProduce(product) && (
             <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-[#fbf8f2] text-[#064e3b] border border-[#ede3d4] text-[9.5px] font-bold shadow-2xs flex items-center gap-1">
               <Sparkles className="w-2.5 h-2.5 text-[#059669]" />
               <span>Fresh</span>
@@ -87,7 +97,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              setIsWishlisted(!isWishlisted);
+              toggleWish();
             }}
             className={`absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center transition-all cursor-pointer shadow-2xs ${
               isWishlisted

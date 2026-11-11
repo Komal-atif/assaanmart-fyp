@@ -11,6 +11,7 @@ import { CheckoutModal } from './components/CheckoutModal';
 import { AuthModal } from './components/AuthModal';
 import { AnimatedBackground } from './components/AnimatedBackground';
 import { GroceryImageScannerModal } from './components/GroceryImageScannerModal';
+import { FavoritesModal } from './components/FavoritesModal';
 import { WelcomeAgent } from './components/WelcomeAgent';
 import type { VoiceLaunch } from './components/VoiceAssistantModal';
 
@@ -71,10 +72,10 @@ export default function App() {
   useEffect(() => {
     const toUser = (u: any): User =>
       ({
-        name: u.user_metadata?.full_name || u.user_metadata?.name || (u.email?.endsWith('@phone.assanmart.pk') ? 'Shopper' : u.email?.split('@')[0]) || 'Shopper',
+        name: u.user_metadata?.full_name || u.user_metadata?.name || (/^\d{11}@/.test(u.email || '') ? 'Shopper' : u.email?.split('@')[0]) || 'Shopper',
         // phone accounts use a placeholder email behind the scenes: never show it
-        email: u.email?.endsWith('@phone.assanmart.pk') ? '' : u.email || '',
-        phone: u.user_metadata?.phone || (u.email?.endsWith('@phone.assanmart.pk') ? u.email.split('@')[0] : ''),
+        email: /^\d{11}@/.test(u.email || '') ? '' : u.email || '',
+        phone: u.user_metadata?.phone || (/^\d{11}@/.test(u.email || '') ? u.email.split('@')[0] : ''),
         address: u.user_metadata?.address || '',
       } as User);
     const apply = (session: any) => {
@@ -108,6 +109,18 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
+  // favourites (the hearts): kept in this browser, shown in the header and on top of the products
+  const [favorites, setFavorites] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('am_favorites') || '[]'); } catch { return []; }
+  });
+  const [isFavoritesOpen, setIsFavoritesOpen] = useState(false);
+  const toggleFavorite = (p: Product) =>
+    setFavorites((prev) => {
+      const next = prev.includes(p.id) ? prev.filter((x) => x !== p.id) : [...prev, p.id];
+      try { localStorage.setItem('am_favorites', JSON.stringify(next)); } catch { /* private window: still works for this visit */ }
+      return next;
+    });
+
   // Modals
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isVoiceOpen, setIsVoiceOpen] = useState(false);
@@ -125,6 +138,22 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [flyingItems, setFlyingItems] = useState<FlyingItem[]>([]);
   const [cartHit, setCartHit] = useState(0);
+
+  // Replay the header logo intro when the page changes or any modal/drawer closes.
+  const [logoPlayKey, setLogoPlayKey] = useState(0);
+  const anyModalOpen =
+    isFavoritesOpen || isCartOpen || isVoiceOpen || isOrdersOpen || isImageScannerOpen ||
+    isAuthOpen || isCheckoutOpen || !!selectedProductDetail;
+  const wasModalOpen = useRef(false);
+  useEffect(() => {
+    if (wasModalOpen.current && !anyModalOpen) setLogoPlayKey((k) => k + 1);
+    wasModalOpen.current = anyModalOpen;
+  }, [anyModalOpen]);
+  const firstView = useRef(true);
+  useEffect(() => {
+    if (firstView.current) { firstView.current = false; return; }
+    setLogoPlayKey((k) => k + 1);
+  }, [currentView]);
   const cartBtnRef = useRef<HTMLButtonElement | null>(null);
   const toastTimerRef = useRef<any>(null);
 
@@ -277,7 +306,19 @@ export default function App() {
     });
     setCartHit((h) => h + 1);
     showToast(`Added ${items.length} item${items.length === 1 ? '' : 's'} from your list`);
-    setIsCartOpen(true);
+  };
+
+  // the cart drawer's checkout button, and the scanner's "checkout" (button or voice), do the same thing
+  const proceedToCheckout = () => {
+    setIsCartOpen(false);
+    if (!user) {
+      // browsing and filling the cart is free; placing an order needs an account
+      setCheckoutAfterLogin(true);
+      setIsAuthOpen(true);
+      showToast('Please sign in to place your order. Your cart is saved.');
+      return;
+    }
+    setIsCheckoutOpen(true);
   };
 
   const handleChangeQuantity = (productId: string, delta: number) => {
@@ -395,7 +436,10 @@ export default function App() {
         products={productList}
         onSelectProduct={(p) => setSelectedProductDetail(p)}
         cartHit={cartHit}
+        favoritesCount={favorites.length}
+        onOpenFavorites={() => setIsFavoritesOpen(true)}
         cartBtnRef={cartBtnRef}
+        logoPlayKey={logoPlayKey}
       />
 
       {/* Main View Router: Landing Page OR Dashboard */}
@@ -424,6 +468,8 @@ export default function App() {
             initialCategory={selectedCategory}
             searchTerm={searchTerm}
             onSearchChange={setSearchTerm}
+            favorites={favorites}
+            onToggleFavorite={toggleFavorite}
             onOpenImageScanner={() => setIsImageScannerOpen(true)}
             onOpenVoice={() => { setVoiceLaunch(null); setIsVoiceOpen(true); }}
           />
@@ -441,6 +487,21 @@ export default function App() {
         onNavigateSection={navigateSection}
       />
 
+      {/* Favourites (opens from the header heart, like the cart) */}
+      <FavoritesModal
+        isOpen={isFavoritesOpen}
+        onClose={() => setIsFavoritesOpen(false)}
+        products={favorites.map((id) => productList.find((p) => p.id === id)).filter((p): p is Product => Boolean(p))}
+        cart={cartMap}
+        onAddToCart={handleAddToCart}
+        onChangeQuantity={handleChangeQuantity}
+        onToggleFavorite={toggleFavorite}
+        onQuickView={(p) => {
+          setIsFavoritesOpen(false);
+          setSelectedProductDetail(p);
+        }}
+      />
+
       {/* Cart Drawer */}
       <CartDrawer
         isOpen={isCartOpen}
@@ -449,17 +510,7 @@ export default function App() {
         onChangeQuantity={handleChangeQuantity}
         onRemoveItem={handleRemoveItem}
         onClearCart={handleClearCart}
-        onProceedToCheckout={() => {
-          setIsCartOpen(false);
-          if (!user) {
-            // browsing and filling the cart is free; placing an order needs an account
-            setCheckoutAfterLogin(true);
-            setIsAuthOpen(true);
-            showToast('Please sign in to place your order. Your cart is saved.');
-            return;
-          }
-          setIsCheckoutOpen(true);
-        }}
+        onProceedToCheckout={proceedToCheckout}
       />
 
       {/* Voice Assistant Modal */}
@@ -500,6 +551,7 @@ export default function App() {
         products={productList}
         lang={voiceLang}
         onAddScanned={handleAddScanned}
+        onCheckout={proceedToCheckout}
         onContinueByVoice={({ cart, lines }) => {
           setIsImageScannerOpen(false);
           setVoiceLaunch({ lang: voiceLang, preload: { lang: voiceLang, cart, lines } });
@@ -527,6 +579,7 @@ export default function App() {
 
       {/* Checkout Modal */}
       <CheckoutModal
+        lang={voiceLang}
         isOpen={isCheckoutOpen}
         onClose={() => setIsCheckoutOpen(false)}
         cart={cart}

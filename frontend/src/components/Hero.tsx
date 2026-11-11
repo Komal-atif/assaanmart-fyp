@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowRight, Mic, Sparkles, Volume2, CheckCircle2 } from 'lucide-react';
+import { MascotAnimation } from './MascotAnimation';
 
 interface HeroProps {
   onOpenVoice: () => void;
@@ -161,12 +162,7 @@ export const Hero: React.FC<HeroProps> = ({ onOpenVoice, onExploreStore }) => {
 
                 {/* 5. Perfect Center Circle Housing the 3D Mascot */}
                 <div className="w-48 h-48 sm:w-60 sm:h-60 rounded-full bg-gradient-to-b from-white via-[#fcfbf9] to-[#f4fbf6] border-4 border-emerald-100 shadow-2xl overflow-hidden p-3 flex items-center justify-center relative z-20 transition-transform duration-300 hover:scale-105">
-                  <img
-                    src="/public/mascot.png"
-                    alt="AssanMart Assistant"
-                    className="w-full h-full object-contain filter drop-shadow-md animate-float-gentle"
-                    draggable={false}
-                  />
+                  <MascotAnimation className="w-full h-full" />
                 </div>
 
                 {/* 6. Circling Small Voice Automation Cards */}

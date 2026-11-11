@@ -18,7 +18,8 @@ interface AuthModalProps {
 
 // Customers sign in with their PHONE NUMBER + password. Behind the scenes Supabase gets a placeholder email made from
 // the number, so nobody has to receive or confirm an email.
-const PHONE_DOMAIN = 'phone.assanmart.pk';
+// Set VITE_PHONE_EMAIL_DOMAIN in .env to a domain that has real mail (MX) records; Supabase rejects domains without them.
+const PHONE_DOMAIN = (import.meta.env.VITE_PHONE_EMAIL_DOMAIN as string | undefined) || 'phone.assanmart.pk';
 
 function normalizePhone(raw: string): string {
   let d = (raw || '').replace(/\D/g, '');

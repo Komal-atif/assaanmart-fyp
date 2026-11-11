@@ -3206,6 +3206,35 @@ _S_YES = re.compile(r"\b(yes|yeah|yep|yup|ok|okay|sure|confirm|confirmed|right|c
 _S_NO = re.compile(r"\b(no|nope|cancel|stop)\b|نہیں|رک")
 
 
+_S_NEXT_CHECKOUT = re.compile(r"check ?out|checkout|\bpay\b|payment|place (?:the |my )?order|order now|confirm (?:the |my )?order|چیک ?آؤٹ|چیک ?آوٹ|چیکاؤٹ|ادائیگی|آرڈر (?:کر|دے|پلیس)|بل")
+_S_NEXT_MORE = re.compile(r"\bmore\b|add more|another|scan|photo|picture|\bagain\b|\bmore items\b|مزید|اور چیز|اور سامان|ایڈ مور|دوسری|دوبارہ|تصویر")
+_S_NEXT_BROWSE = re.compile(r"brows|continue shopping|keep shopping|look around|\bshop\b|store|دیکھ|براؤز|براوز|سٹور|اسٹور|دکان|خریداری")
+
+
+def scan_pick_by_name(options, text):
+    """Which of the shown options did the customer NAME? Words that tell the options apart (rare words, brand, type) and the
+    size said ("5 litre", "ایک کلو") are compared with every option. -> ("pick", index) | ("ambiguous", [indices]) | None."""
+    prods = [PRODUCTS.get(o.get("id")) for o in options]
+    if len(prods) < 2 or not all(prods):
+        return None
+    spoken = numwords_to_digits(text.lower())
+    want = size_pairs(spoken)
+    sc = rank_products(prods, text) or [0.0] * len(prods)
+    tot = []
+    for p_, base in zip(prods, sc):
+        have = size_pairs(f"{p_['name']} {p_.get('size', '')}")
+        tot.append(base + (2.0 if want and same_size(want, have) else 0.0))
+    top = max(tot)
+    if top <= 0:
+        return None
+    ties = [i for i, v in enumerate(tot) if v >= top - 1e-9]
+    if len(ties) == 1:
+        return ("pick", ties[0])
+    if len(ties) < len(tot):
+        return ("ambiguous", ties)
+    return None
+
+
 def scan_intent(context, text, options):
     s = text.lower()
     toks = set(tokens(s))
@@ -3220,6 +3249,14 @@ def scan_intent(context, text, options):
         if _S_NO.search(s) or _S_REVIEW.search(s):
             return {"action": "no"}
         return {"action": None}
+    if context == "next":                                  # after the items were added: checkout / browse / add more
+        if _S_NEXT_CHECKOUT.search(s):
+            return {"action": "checkout"}
+        if _S_NEXT_MORE.search(s):
+            return {"action": "more"}
+        if _S_NEXT_BROWSE.search(s):
+            return {"action": "browse"}
+        return {"action": None}
     if context == "pick":
         if _S_SKIP.search(s):
             return {"action": "skip"}
@@ -3227,17 +3264,18 @@ def scan_intent(context, text, options):
             return {"action": "back"}
         if _S_MORE.search(s):
             return {"action": "more"}
-        hits = [i for i, pat in _ORD.items() if i < len(options) and re.search(pat, s)]
-        if hits:                                    # "the second one" matches "one" too -> the highest ordinal wins
-            return {"action": "pick", "index": max(hits)}
-        # by NAME: the same matcher the voice agent uses (names, Urdu names, brands, aliases), so "سفید لوبیا" works too
-        prods = [PRODUCTS.get(o.get("id")) for o in options]
-        if prods and all(prods):
-            sc = rank_products(prods, text)
-            if sc and max(sc) > 0:
-                order_ = sorted(range(len(sc)), key=lambda i: -sc[i])
-                if len(sc) == 1 or sc[order_[0]] > sc[order_[1]] * 1.15:
-                    return {"action": "pick", "index": order_[0]}
+        ordinal = [i for i, pat in _ORD.items() if i < len(options) and re.search(pat, s)]
+        said_number = re.search(r"\b(number|option|no\.?)\b|نمبر|آپشن", s)
+        by_name = scan_pick_by_name(options, text)
+        if by_name and not said_number:                    # "Dalda 5 litre", "سفید لوبیا", "the Sella one": by name (and size)
+            if by_name[0] == "pick":
+                return {"action": "pick", "index": by_name[1]}
+            if not ordinal:
+                return {"action": "ambiguous", "indices": by_name[1]}
+        if ordinal:                                         # "the second one" matches "one" too -> the highest ordinal wins
+            return {"action": "pick", "index": max(ordinal)}
+        if by_name and by_name[0] == "ambiguous":
+            return {"action": "ambiguous", "indices": by_name[1]}
         scores = []
         for i, o in enumerate(options):
             ot = {w for w in tokens(f"{o.get('brand','')} {o.get('name','')} {o.get('size','')}".lower()) if len(w) >= 3}
@@ -3290,20 +3328,59 @@ async def scan_reply(audio: UploadFile = File(...), context: str = Form("pick"),
 
 # ---- sign-up form by voice: the agent asks name -> phone -> address, the form fills itself ------------------
 
-_DIGIT_WORDS = {"zero": "0", "oh": "0", "sifar": "0", "sifr": "0", "صفر": "0", "سفر": "0", "one": "1", "ek": "1", "aik": "1", "ایک": "1",
-                "two": "2", "do": "2", "دو": "2", "three": "3", "teen": "3", "تین": "3", "four": "4", "char": "4", "chaar": "4", "چار": "4",
-                "five": "5", "panch": "5", "paanch": "5", "پانچ": "5", "six": "6", "chhe": "6", "cheh": "6", "che": "6", "چھ": "6",
-                "seven": "7", "saat": "7", "سات": "7", "eight": "8", "aath": "8", "ath": "8", "آٹھ": "8", "nine": "9", "nau": "9", "نو": "9"}
+_DIGIT_WORDS = {
+    "0": ["zero", "oh", "o", "sifar", "sifr", "صفر", "سفر", "زیرو", "زیر", "اوہ"],
+    "1": ["one", "ek", "aik", "ایک", "ون", "وان"],
+    "2": ["two", "do", "دو", "ٹو"],
+    "3": ["three", "teen", "تین", "تھری", "تھرے", "تری", "تھرى"],
+    "4": ["four", "for", "char", "chaar", "چار", "فور", "فار"],
+    "5": ["five", "panch", "paanch", "پانچ", "فائیو", "فائو", "پنج"],
+    "6": ["six", "chhe", "cheh", "che", "chay", "چھ", "چھے", "چھہ", "سکس", "چھے"],
+    "7": ["seven", "saat", "سات", "سیون", "سیوین"],
+    "8": ["eight", "aath", "ath", "آٹھ", "ایٹ", "اٹھ"],
+    "9": ["nine", "nau", "نو", "نائن", "ناین"],
+}
+_DW = {w: d for d, ws in _DIGIT_WORDS.items() for w in ws}
+_MULT = {"double": 2, "dabal": 2, "dabbal": 2, "dubal": 2, "ڈبل": 2, "ڈبّل": 2, "دوبل": 2, "ڈبلی": 2,
+         "triple": 3, "tripal": 3, "teepal": 3, "ٹرپل": 3, "ٹریپل": 3, "تریپل": 3, "ٹپل": 3}
+_SEG_WORDS = sorted([w for w in _DW if len(w) > 1], key=len, reverse=True)
+
+
+def _seg_digits(word):
+    """'تھریتری' -> '33', 'سکسون' -> '61' (digit words the speech engine glued together). None if it is not only digit words."""
+    n = len(word)
+    best = [None] * (n + 1)
+    best[0] = ""
+    for i in range(n):
+        if best[i] is None:
+            continue
+        for w in _SEG_WORDS:
+            if word.startswith(w, i) and best[i + len(w)] is None:
+                best[i + len(w)] = best[i] + _DW[w]
+    return best[n]
 
 
 def spoken_phone(text):
-    """'03 00 1234567' / 'zero three zero zero ...' / 'صفر تین صفر صفر ...' -> '03001234567' (or what could be understood)."""
-    out = []
-    for w in re.findall(r"[\w]+", (text or "").translate(ARABIC_DIGITS).lower()):
+    """'zero three double three' / 'زیرو ڈبل تھری سکس47 ٹرپل فور سکس ون' / '0336 47' -> '03364744461' (or what could be understood).
+    Understands double / triple (ڈبل / ٹرپل), digit words in English, Urdu and Roman Urdu, glued words (تھریتری = 33) and mixed tokens (سکس47)."""
+    toks = re.findall(r"\d+|[^\W\d_]+", (text or "").translate(ARABIC_DIGITS).lower())
+    out, mult = [], 1
+    for idx, w in enumerate(toks):
+        if w in _MULT:
+            mult = _MULT[w]
+            continue
         if w.isdigit():
-            out.append(w)
-        elif w in _DIGIT_WORDS:
-            out.append(_DIGIT_WORDS[w])
+            out.append(w[0] * mult + w[1:] if mult > 1 else w)
+            mult = 1
+            continue
+        d = _DW.get(w)
+        if d is None and w == "و" and out and idx == len(toks) - 1:   # speech engines often cut the last "ون" to "و"
+            d = "1"
+        if d is None:
+            d = _seg_digits(w)
+        if d:
+            out.append(d[0] * mult + d[1:] if mult > 1 else d)
+            mult = 1
     d = "".join(out)
     if d.startswith("92") and len(d) == 12:
         d = "0" + d[2:]
@@ -3334,7 +3411,8 @@ async def form_reply(audio: UploadFile = File(...), field: str = Form("name"), l
             d = spoken_phone(cand)
             if len(d) == 11 and d.startswith("03"):
                 return {"heard": main, "value": d, "ok": True}
-        return {"heard": main, "value": spoken_phone(main), "ok": False}
+        best = max((spoken_phone(c) for c in (en_text, ur_text, main)), key=len)     # keep the fullest attempt, the form shows what was heard
+        return {"heard": main, "value": best, "ok": False}
     if field == "name":
         v = _NAME_LEAD.sub("", main.strip()).strip(" .،۔")
         return {"heard": main, "value": v.title() if v.isascii() else v, "ok": len(v) >= 2}

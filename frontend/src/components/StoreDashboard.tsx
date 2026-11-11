@@ -37,6 +37,8 @@ interface StoreDashboardProps {
   onSearchChange: (term: string) => void;
   onOpenImageScanner?: () => void;
   onOpenVoice?: () => void;
+  favorites?: string[];
+  onToggleFavorite?: (product: Product) => void;
 }
 
 const POPULAR_IDS = ["251", "256", "249", "250", "2", "325", "97", "83"];
@@ -80,6 +82,8 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
   onSearchChange,
   onOpenImageScanner,
   onOpenVoice,
+  favorites = [],
+  onToggleFavorite,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(initialCategory);
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
@@ -126,6 +130,20 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
   }, [filteredProducts, visibleCount]);
 
   const showSpecificResults = Boolean(selectedCategory || searchTerm.trim());
+
+  // Popular Products: the customer's favourites come first, then the usual popular ones
+  const popularProducts = useMemo(() => {
+    const favs = favorites.map((id) => products.find((p) => p.id === id)).filter((p): p is Product => Boolean(p));
+    const rest = POPULAR_IDS.filter((id) => !favorites.includes(id))
+      .map((id) => products.find((p) => p.id === id))
+      .filter((p): p is Product => Boolean(p));
+    return [...favs, ...rest];
+  }, [favorites, products]);
+
+  const favProps = (p: Product) => ({
+    isFavorite: favorites.includes(p.id),
+    onToggleFavorite,
+  });
 
   return (
     <div className="bg-transparent min-h-screen pb-20 font-sans selection:bg-[#cde8dd] selection:text-[#064e3b]">
@@ -414,6 +432,7 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
                     onAddToCart={onAddToCart}
                     onChangeQuantity={onChangeQuantity}
                     onQuickView={onQuickView}
+                    {...favProps(p)}
                   />
                 ))}
               </div>
@@ -439,7 +458,7 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-lg sm:text-xl font-black text-[#064e3b]">Popular Products</h2>
-                  <p className="text-xs text-[#377d67]">Top grocery essentials ordered by families this week</p>
+                  <p className="text-xs text-[#377d67]">{favorites.length > 0 ? 'Your favourites first, then top grocery essentials' : 'Top grocery essentials ordered by families this week'}</p>
                 </div>
                 <button
                   onClick={() => setSelectedCategory('Fruits & Vegetables')}
@@ -450,9 +469,7 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4 gap-3 sm:gap-4">
-                {POPULAR_IDS.map((id) => byId(id))
-                  .filter((p): p is Product => Boolean(p))
-                  .map((product) => (
+                {popularProducts.map((product) => (
                     <ProductCard
                       key={product.id}
                       product={product}
@@ -460,6 +477,7 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
                       onAddToCart={onAddToCart}
                       onChangeQuantity={onChangeQuantity}
                       onQuickView={onQuickView}
+                      {...favProps(product)}
                     />
                   ))}
               </div>
@@ -520,6 +538,7 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
                         onAddToCart={onAddToCart}
                         onChangeQuantity={onChangeQuantity}
                         onQuickView={onQuickView}
+                        {...favProps(product)}
                       />
                     ))}
                 </div>
@@ -537,7 +556,7 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 items-end">
                 {[
                   { icon: <Truck className="w-6 h-6 text-white" />, title: 'Fast Delivery', desc: 'Doorstep arrival within 30-45 minutes.' },
                   { icon: <Leaf className="w-6 h-6 text-white" />, title: 'Fresh Quality', desc: 'Hand-sorted vegetables and farm milk.' },
@@ -546,8 +565,8 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
                 ].map((item, idx) => (
                   <div
                     key={item.title}
-                    className="bg-[#064e3b] text-white rounded-t-[50px] rounded-b-2xl p-5 pt-8 flex flex-col items-center shadow-md hover:-translate-y-1 transition-transform border border-[#065f46]"
-                    style={{ minHeight: idx % 2 === 1 ? '220px' : '200px' }}
+                    className={`bg-[#064e3b] text-white rounded-t-[50px] rounded-b-2xl p-5 pt-8 flex flex-col items-center shadow-md hover:-translate-y-1 transition-transform border border-[#065f46]`}
+                    style={{ minHeight: idx % 2 === 1 ? '330px' : '270px' }}
                   >
                     <div className="w-12 h-12 rounded-full border border-white/20 flex items-center justify-center mb-2.5 bg-white/10">
                       {item.icon}

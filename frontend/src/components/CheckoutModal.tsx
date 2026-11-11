@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import { X, CheckCircle, Truck, CreditCard, Banknote, ShieldCheck, MapPin, Phone, User as UserIcon, LocateFixed, Loader2 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { X, CheckCircle, Truck, CreditCard, Banknote, ShieldCheck, MapPin, Phone, User as UserIcon, LocateFixed, Loader2, Mic, MicOff } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { CartItem, Order, User } from '../types';
 import { placeWebOrder, fetchProfile } from '../services/orderApi';
+import { useVoiceLoop } from '../hooks/useVoiceLoop';
+import { getBackendUrl, scanSay, formVoiceReply } from '../services/voiceApi';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -10,6 +12,8 @@ interface CheckoutModalProps {
   cart: CartItem[];
   user: User | null;
   onOrderSuccess: (order: Order) => void;
+  /** language of the voice helper */
+  lang?: 'english' | 'urdu';
 }
 
 const CITIES = [
@@ -31,6 +35,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   cart,
   user,
   onOrderSuccess,
+  lang = 'english',
 }) => {
   const [name, setName] = useState(user?.name || '');
   const [phone, setPhone] = useState(user?.phone || '');
@@ -46,6 +51,171 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [completedOrder, setCompletedOrder] = useState<Order | null>(null);
   const [submitError, setSubmitError] = useState('');
 
+  // ---------- voice helper: greets by name, asks only for the delivery address, then confirms ----------
+  type CStep = 'address' | 'saved' | 'final' | null;
+  const [voiceOn, setVoiceOn] = useState(false);
+  const [vPhase, setVPhase] = useState<'idle' | 'speaking' | 'listening' | 'thinking'>('idle');
+  const [agentText, setAgentText] = useState('');
+  const stepRef = useRef<CStep>(null);
+  const playerRef = useRef<HTMLAudioElement | null>(null);
+  const resolverRef = useRef<(() => void) | null>(null);
+  const tokenRef = useRef(0);
+  const activeRef = useRef(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const vals = useRef({ name: '', address: '', total: 0 });
+  const ur = lang === 'urdu';
+  const tt = (en: string, u: string) => (ur ? u : en);
+  const total = () => {
+    const sub = cart.reduce((sum, item) => sum + (item.price || 0) * item.quantity, 0);
+    return sub + (sub >= 2000 ? 0 : 150);
+  };
+  vals.current = { name, address, total: total() };
+  const addrNow = useRef('');
+  addrNow.current = address;
+
+  const stopSpeech = () => {
+    playerRef.current?.pause();
+    if (resolverRef.current) {
+      const r = resolverRef.current;
+      resolverRef.current = null;
+      r();
+    }
+  };
+  const playUrl = (url: string) =>
+    new Promise<void>((resolve) => {
+      const a = playerRef.current || (playerRef.current = new Audio());
+      if (resolverRef.current) resolverRef.current();
+      resolverRef.current = resolve;
+      const done = () => {
+        if (resolverRef.current === resolve) resolverRef.current = null;
+        resolve();
+      };
+      a.onended = done;
+      a.onerror = done;
+      a.src = url.startsWith('http') ? url : `${getBackendUrl()}${url}`;
+      a.play().catch(done);
+    });
+
+  const listenNow = async () => {
+    if (!activeRef.current) return;
+    try {
+      await voice.open();
+    } catch {
+      stopVoice();
+      return;
+    }
+    setVPhase('listening');
+    voice.listen();
+  };
+
+  const say = async (text: string, listen = true) => {
+    if (!activeRef.current) return;
+    const my = ++tokenRef.current;
+    setAgentText(text);
+    voice.pause();
+    setVPhase('speaking');
+    try {
+      const d = await scanSay(text, lang);
+      if (my !== tokenRef.current) return;
+      if (d.audio_url) {
+        await playUrl(d.audio_url);
+        await new Promise((r) => setTimeout(r, 350));
+      }
+    } catch {
+      /* no voice server: the form still works by typing */
+    }
+    if (my !== tokenRef.current) return;
+    if (listen) await listenNow();
+    else setVPhase('idle');
+  };
+
+  const askFinal = () => {
+    stepRef.current = 'final';
+    const v = vals.current;
+    return say(
+      tt(
+        `Delivering to ${v.address}. Your total is ${Math.round(v.total)} rupees, cash on delivery. Shall I place the order? Say yes or no.`,
+        `ڈیلیوری ${v.address} پر ہوگی۔ کل رقم ${Math.round(v.total)} روپے ہے، کیش آن ڈیلیوری۔ کیا آرڈر کر دوں؟ ہاں یا نہیں کہیں۔`
+      )
+    );
+  };
+  const askAddress = (first = false) => {
+    stepRef.current = 'address';
+    const n = vals.current.name;
+    return say(
+      first
+        ? tt(`Hello ${n}! What is your delivery address? You can say it, or press "Use my current location".`,
+             `${n} صاحب/صاحبہ خوش آمدید! آپ کا ڈیلیوری ایڈریس کیا ہے؟ آپ بول سکتے ہیں، یا "میری موجودہ لوکیشن" کا بٹن دبائیں۔`)
+        : tt('Okay. Please say your delivery address, or press "Use my current location".',
+             'ٹھیک ہے۔ اپنا ڈیلیوری ایڈریس بولیں، یا "میری موجودہ لوکیشن" کا بٹن دبائیں۔')
+    );
+  };
+
+  const handleUtterance = async (blob: Blob) => {
+    const step = stepRef.current;
+    if (!step || !activeRef.current) return;
+    setVPhase('thinking');
+    try {
+      if (step === 'address') {
+        const r = await formVoiceReply(blob, 'address', lang);
+        if (!r.heard) return listenNow();
+        if (!r.ok || !r.value) return say(tt("Sorry, I didn't catch the address. Please say it again.", 'معذرت، ایڈریس سمجھ نہیں آیا۔ دوبارہ بولیں۔'));
+        vals.current = { ...vals.current, address: r.value };
+        setAddress(r.value);
+        setCoords(null);
+        return askFinal();
+      }
+      const r = await formVoiceReply(blob, 'confirm', lang);
+      if (!r.heard) return listenNow();
+      if (r.action === 'yes') {
+        stepRef.current = null;
+        await say(tt('Placing your order now.', 'آپ کا آرڈر کر رہا ہوں۔'), false);
+        setTimeout(() => formRef.current?.requestSubmit(), 200);
+        return;
+      }
+      if (r.action === 'no') return askAddress(false);
+      return say(tt('Please say yes to place the order, or no to change the address.', 'آرڈر کے لیے ہاں کہیں، ایڈریس بدلنے کے لیے نہیں۔'));
+    } catch (e) {
+      console.warn('checkout voice failed:', e);
+      return listenNow();
+    }
+  };
+
+  const voice = useVoiceLoop({ onUtterance: handleUtterance });
+
+  const stopVoice = () => {
+    activeRef.current = false;
+    tokenRef.current += 1;
+    stopSpeech();
+    voice.pause();
+    voice.stopAll();
+    stepRef.current = null;
+    setVoiceOn(false);
+    setVPhase('idle');
+  };
+
+  const startVoice = () => {
+    activeRef.current = true;
+    setVoiceOn(true);
+    if (vals.current.address.trim()) {
+      // a saved address exists: just confirm it
+      stepRef.current = 'saved';
+      const v = vals.current;
+      return say(
+        tt(`Hello ${v.name}! Should I deliver to ${v.address}? Your total is ${Math.round(v.total)} rupees, cash on delivery. Say yes to place the order, or no to change the address.`,
+           `${v.name} خوش آمدید! کیا ${v.address} پر ڈیلیوری کر دوں؟ کل رقم ${Math.round(v.total)} روپے، کیش آن ڈیلیوری۔ آرڈر کے لیے ہاں کہیں، ایڈریس بدلنے کے لیے نہیں۔`)
+      );
+    }
+    return askAddress(true);
+  };
+  const startRef = useRef(startVoice);
+  startRef.current = startVoice;
+
+  // closing the window (or finishing the order) always releases the microphone and the sound
+  useEffect(() => {
+    if ((!isOpen || completedOrder) && (activeRef.current || voiceOn)) stopVoice();
+  }, [isOpen, completedOrder]);
+
   // Delivery details the customer gave before come back filled in: they only have to confirm them.
   useEffect(() => {
     if (!isOpen) return;
@@ -58,6 +228,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       if (p.city) setCity(p.city);
       if (p.lat != null && p.lng != null) setCoords({ lat: p.lat, lng: p.lng });
       if (p.address) setSavedNote(true);
+      if (p.name) vals.current = { ...vals.current, name: p.name };
+      if (p.address) vals.current = { ...vals.current, address: p.address };
+    }).catch(() => {}).finally(() => {
+      // the helper starts by itself: no button needed
+      if (alive && cart.length > 0) setTimeout(() => { if (alive && !activeRef.current) startRef.current(); }, 500);
     });
     return () => {
       alive = false;
@@ -67,6 +242,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   // "Use my current location": the browser gives the position, OpenStreetMap turns it into an address.
   const useMyLocation = () => {
     setLocError('');
+    if (activeRef.current) { stopSpeech(); voice.pause(); tokenRef.current += 1; setVPhase('idle'); }
     if (!navigator.geolocation) {
       setLocError('Your browser cannot share its location.');
       return;
@@ -90,6 +266,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           setAddress(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
         } finally {
           setLocating(false);
+          if (activeRef.current) {
+            // the customer chose the location button instead of speaking: carry on with the confirmation
+            setTimeout(() => { vals.current = { ...vals.current, address: addrNow.current }; askFinal(); }, 300);
+          }
         }
       },
       (err) => {
@@ -108,6 +288,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (activeRef.current && stepRef.current !== null) stopVoice();
     if (!name.trim() || !phone.trim() || !address.trim()) {
       alert('Please fill out all required delivery fields.');
       return;
@@ -259,7 +440,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
           ) : (
             /* Checkout Form */
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <form ref={formRef} onSubmit={handleSubmit} className="space-y-6">
               
               {/* Delivery Details */}
               <div className="space-y-4">
@@ -267,6 +448,24 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   <MapPin className="w-4 h-4 text-emerald-600" />
                   Delivery Information
                 </h4>
+
+                <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
+                  <button
+                    type="button"
+                    onClick={voiceOn ? stopVoice : startVoice}
+                    className={`shrink-0 px-3 py-2 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer ${
+                      voiceOn ? 'bg-slate-200 text-slate-700' : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                    }`}
+                  >
+                    {voiceOn ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    {voiceOn ? 'Voice off' : 'Voice on'}
+                  </button>
+                  <p className="text-[11px] text-emerald-900 leading-snug pt-1" dir="auto">
+                    {voiceOn
+                      ? `${vPhase === 'listening' ? '🎙 Listening… ' : vPhase === 'speaking' ? '🔊 ' : vPhase === 'thinking' ? '… ' : ''}${agentText}`
+                      : 'Turn voice on and just tell me your delivery address, or use the location button.'}
+                  </p>
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>

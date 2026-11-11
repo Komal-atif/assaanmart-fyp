@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   X, Camera, Upload, Loader2, Check, AlertCircle, Minus, Plus, ScanLine as ScanIcon,
-  ArrowRight, ArrowLeft, SkipForward, Search, Trash2, ChevronDown, Mic, MicOff,
+  ArrowRight, ArrowLeft, SkipForward, Search, Trash2, ChevronDown, Mic, MicOff, ShoppingCart, Store, CheckCircle2,
 } from 'lucide-react';
 import { Product } from '../types';
 import { scanGroceryList, ScanLine, ScanCandidate } from '../services/orderApi';
@@ -18,6 +18,8 @@ interface Props {
   onAddScanned: (items: { product: Product; quantity: number }[]) => void;
   /** Finish the open lines by voice: the confirmed items + the lines still open are handed to the voice agent. */
   onContinueByVoice?: (payload: { cart: { id: number; qty: number }[]; lines: string[] }) => void;
+  /** after the items were added: the customer wants to pay now */
+  onCheckout?: () => void;
 }
 
 interface Row {
@@ -27,7 +29,7 @@ interface Row {
   skipped: boolean;
 }
 
-type Step = 'upload' | 'detected' | 'pick' | 'summary';
+type Step = 'upload' | 'detected' | 'pick' | 'summary' | 'added';
 
 // Phone photos are big: shrink to 1600px JPEG before uploading (faster, and inside the server limit).
 async function shrink(file: File, max = 1600): Promise<Blob> {
@@ -43,7 +45,7 @@ async function shrink(file: File, max = 1600): Promise<Blob> {
 
 const money = (n: number | null | undefined) => `PKR ${Math.round(n ?? 0).toLocaleString()}`;
 
-export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, products, lang = 'english', onAddScanned, onContinueByVoice }) => {
+export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, products, lang = 'english', onAddScanned, onContinueByVoice, onCheckout }) => {
   const [step, setStep] = useState<Step>('upload');
   const [preview, setPreview] = useState('');
   const [busy, setBusy] = useState(false);
@@ -53,6 +55,8 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
   const [showMore, setShowMore] = useState(false);
   const [query, setQuery] = useState('');
   const [promptTick, setPromptTick] = useState(0); // lets the agent re-ask the same item
+  const [qtyScreen, setQtyScreen] = useState(false); // item step 2: the product is chosen, only the quantity is shown
+  const [added, setAdded] = useState({ n: 0, total: 0 });
   const fileRef = useRef<HTMLInputElement>(null);
   const [voiceOn, setVoiceOn] = useState(true);
   const [vPhase, setVPhase] = useState<'idle' | 'speaking' | 'listening' | 'thinking'>('idle');
@@ -73,6 +77,7 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
     setBusy(false);
     setShowMore(false);
     setQuery('');
+    setQtyScreen(false);
     if (fileRef.current) fileRef.current.value = '';
   };
   const close = () => {
@@ -108,10 +113,12 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
     setIdx(i);
     setShowMore(false);
     setQuery('');
+    setQtyScreen(false);
     const r = from[i];
     if (r && r.picked == null && !r.skipped && r.line.status === 'matched' && r.line.candidates[0]) {
       const c = r.line.candidates[0];
       setRows(from.map((x, k) => (k === i ? { ...x, picked: c.id, qty: c.quantity } : x)));
+      setQtyScreen(true);                         // only one product fits: nothing to choose, go straight to the quantity
     }
     setStep('pick');
   };
@@ -123,7 +130,10 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
     else setStep('summary');
   };
 
-  const confirmItem = () => next(rows);
+  const confirmItem = () => {
+    if (cur?.picked != null && !qtyScreen) return choose(cur.picked, cur.qty);   // product first, then the quantity screen
+    next(rows);
+  };
   const skipItem = () => {
     const nr = rows.map((r, k) => (k === idx ? { ...r, picked: null, skipped: true } : r));
     setRows(nr);
@@ -139,7 +149,15 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
       .filter((x) => x.product);
     if (items.length === 0) return;
     onAddScanned(items);
-    close();
+    setAdded({ n: items.length, total });
+    setStep('added');                              // stay here: the agent asks what next (checkout / browse / more)
+  };
+
+  const goCheckout = () => {
+    stopVoice();
+    reset();
+    onClose();
+    onCheckout?.();
   };
 
   const openRows = rows.filter((r) => r.skipped || r.picked == null);
@@ -189,6 +207,18 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
         .filter((p) => p.price != null && p.stock !== 0 && query.toLowerCase().split(/\s+/).every((w) => p.search.includes(w)))
         .slice(0, 12)
     : [];
+
+  /** the customer chose a product (tap, or by voice): show the quantity screen and ask how many */
+  const choose = (id: number, qty: number) => {
+    if (!cur) return;
+    update(idx, { picked: id, qty, skipped: false });
+    setQtyScreen(true);
+    const p = byId.get(String(id));
+    if (voiceOnRef.current && p) {
+      const c = findCand(cur, id) || ({ id, name: p.name, brand: (p as any).brand || '', size: p.size, price: p.price ?? 0, quantity: qty } as ScanCandidate);
+      sayQty(tt(`Okay, ${spokenName(c)}. `, `ٹھیک ہے، ${spokenName(c)}۔ `), { ...cur, picked: id }, c);
+    }
+  };
 
   // =====================================================================================
   // VOICE: the agent speaks every step (upload, detected items, each item's options, summary) and listens
@@ -286,7 +316,7 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
   const ctxRef = useRef({ step, idx, rows, showMore });
   ctxRef.current = { step, idx, rows, showMore };
   const actionsRef = useRef<any>({});
-  actionsRef.current = { goTo, next, skipItem, update, addAll, setShowMore, setStep, optionList, sayThenListen, tt, rupees, spokenName, sayQty, findCand };
+  actionsRef.current = { goTo, next, skipItem, update, addAll, setShowMore, setStep, optionList, sayThenListen, tt, rupees, spokenName, sayQty, findCand, setQtyScreen, goCheckout, onClose: close, reset };
 
   const handleUtterance = async (blob: Blob) => {
     const { step: st, idx: i, rows: rs } = ctxRef.current;
@@ -326,10 +356,19 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
     }
     const opts: ScanCandidate[] = st === 'pick' ? A.optionList() : [];
     try {
-      const r = await scanReply(blob, st === 'detected' ? 'detected' : st === 'summary' ? 'summary' : 'pick', lang, opts.map((c) => ({ id: c.id, name: c.name, brand: c.brand, size: c.size })));
+      const r = await scanReply(blob, st === 'detected' ? 'detected' : st === 'summary' ? 'summary' : st === 'added' ? 'next' : 'pick', lang, opts.map((c) => ({ id: c.id, name: c.name, brand: c.brand, size: c.size })));
       if (!r.heard) return listenNow();
       setHeardText(r.heard);
       const row = rs[i];
+      if (st === 'added') {
+        if (r.action === 'checkout') return A.goCheckout();
+        if (r.action === 'browse') {
+          voice.pause();
+          return A.onClose();
+        }
+        if (r.action === 'more') return A.reset();                 // scan another list
+        return A.sayThenListen(A.tt('Say checkout to pay, browse to keep shopping, or add more to scan another list.', 'ادائیگی کے لیے چیک آؤٹ، دکان دیکھنے کے لیے براؤز، یا مزید چیزوں کے لیے ایڈ مور کہیں۔'));
+      }
       if (st === 'detected') {
         if (r.action === 'yes') return A.goTo(0);
         if (r.action === 'no') return A.sayThenListen(A.tt('Okay. Close this window whenever you like, or say yes when you want to start.', 'ٹھیک ہے۔ جب تیار ہوں تو ہاں کہیں۔'));
@@ -343,17 +382,23 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
         if (r.action === 'pick' && r.index != null && opts[r.index]) {
           const c = opts[r.index];
           A.update(i, { picked: c.id, qty: c.quantity, skipped: false });
+          A.setQtyScreen(true);
           return A.sayQty(A.tt(`Okay, ${A.spokenName(c)}. `, `ٹھیک ہے، ${A.spokenName(c)}۔ `), row, c);
+        }
+        if (r.action === 'ambiguous' && r.indices?.length) {
+          const names = r.indices.filter((k: number) => opts[k]).map((k: number) => `${k + 1}: ${A.spokenName(opts[k])}`).join(A.tt(', or ', '، یا '));
+          return A.sayThenListen(A.tt(`Which one do you mean? ${names}. Say the number.`, `آپ کونسا کہہ رہے ہیں؟ ${names}۔ نمبر بولیں۔`));
         }
         if (r.action === 'yes') {
           if (row.picked != null) {
+            A.setQtyScreen(true);
             const pc = A.findCand(row, row.picked);
             const nm = byId.get(String(row.picked))?.name || '';
             if (pc) return A.sayQty(A.tt(`Okay, ${nm}. `, `ٹھیک ہے، ${nm}۔ `), row, pc);
             prefixRef.current = A.tt(`Okay, ${nm}. `, `ٹھیک ہے، ${nm}۔ `);
             return A.next(rs);
           }
-          return A.sayThenListen(A.tt('Which one? Say a number, or say skip.', 'کونسا؟ نمبر بولیں، یا سکپ کہیں۔'));
+          return A.sayThenListen(A.tt('Which one? Say its number or its name, or say skip.', 'کونسا؟ اس کا نمبر یا نام بولیں، یا سکپ کہیں۔'));
         }
         if (r.action === 'skip') {
           prefixRef.current = A.tt('Skipped. ', 'چھوڑ دیا۔ ');
@@ -375,7 +420,7 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
           ? A.tt('Say yes to start choosing.', 'شروع کرنے کے لیے ہاں کہیں۔')
           : st === 'summary'
           ? A.tt('Say yes to add everything to your cart, or review to go again.', 'سب کارٹ میں ڈالنے کے لیے ہاں کہیں، یا دوبارہ دیکھنے کے لیے ریویو کہیں۔')
-          : A.tt('Say a number, say yes to keep the selected one, or say skip.', 'نمبر بولیں، منتخب شدہ رکھنے کے لیے ہاں کہیں، یا سکپ کہیں۔');
+          : A.tt('Say a number or the name, say yes to keep the selected one, or say skip.', 'نمبر یا نام بولیں، منتخب شدہ رکھنے کے لیے ہاں کہیں، یا سکپ کہیں۔');
       return A.sayThenListen(A.tt("Sorry, I didn't get that. ", 'معذرت، سمجھ نہیں آیا۔ ') + help);
     } catch (e) {
       console.warn('scan voice failed:', e);
@@ -424,10 +469,17 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
         const body = list.map((c, k) => `${k + 1}: ${spokenName(c)}, ${rupees(c.price)}`).join('. ');
         const tail =
           cur.picked != null
-            ? tt('I selected the first one. Say yes to confirm, or say another number.', 'میں نے پہلا چن لیا ہے۔ تصدیق کے لیے ہاں کہیں، یا دوسرا نمبر بولیں۔')
-            : tt('Which one would you like? Say a number, or skip.', 'کونسا چاہیے؟ نمبر بولیں، یا سکپ کہیں۔');
+            ? tt('One is already selected. Say yes to keep it, or say another number or name.', 'ایک پہلے سے چنا ہوا ہے۔ رکھنے کے لیے ہاں کہیں، یا دوسرا نمبر یا نام بولیں۔')
+            : tt('Which one would you like? Say its number or its name, or skip.', 'کونسا چاہیے؟ اس کا نمبر یا نام بولیں، یا سکپ کہیں۔');
         sayThenListen(pre + head + body + '. ' + tail);
       }
+    } else if (step === 'added') {
+      sayThenListen(
+        tt(
+          `Done. ${added.n} item${added.n === 1 ? ' is' : 's are'} in your cart. Would you like to checkout, keep browsing, or add more products?`,
+          `ہو گیا۔ ${added.n} چیزیں آپ کے کارٹ میں ہیں۔ کیا آپ چیک آؤٹ کریں گے، براؤز کریں گے، یا مزید چیزیں ڈالیں گے؟`
+        )
+      );
     } else if (step === 'summary') {
       const n = chosen.length;
       const left = openRows.length;
@@ -445,6 +497,12 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
   useEffect(() => {
     if (isOpen && voiceOn && busy) sayThenListen(tt('Reading your list, one moment.', 'آپ کی لسٹ پڑھ رہی ہوں، ذرا انتظار کریں۔'), false);
   }, [busy]);
+
+  // the picture was not a list: the agent says so too
+  useEffect(() => {
+    if (isOpen && voiceOn && error && step === 'upload')
+      sayThenListen(tt("I couldn't find a grocery list in this picture. Please upload another picture.", 'اس تصویر میں مجھے گروسری لسٹ نہیں ملی۔ براہِ کرم کوئی اور تصویر اپ لوڈ کریں۔'), false);
+  }, [error]);
 
   // closing the window or turning the voice off always releases the microphone and the sound
   useEffect(() => {
@@ -465,7 +523,8 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
             <p className="text-xs text-slate-500">
               {step === 'upload' && 'Take a photo of your list. We read it and you choose each item.'}
               {step === 'detected' && 'These are the items we found on your list.'}
-              {step === 'pick' && `Item ${idx + 1} of ${rows.length}: choose the one you want.`}
+              {step === 'pick' && (qtyScreen ? `Item ${idx + 1} of ${rows.length}: how many do you want?` : `Item ${idx + 1} of ${rows.length}: choose the one you want.`)}
+              {step === 'added' && 'Your items are in the cart.'}
               {step === 'summary' && 'Check your choices, then add them to your cart.'}
             </p>
           </div>
@@ -518,31 +577,34 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
                   <span className="text-xs text-slate-500">English, Urdu or Roman Urdu · printed or handwritten</span>
                 </button>
               ) : (
-                <div className="flex gap-4 items-start">
-                  <img src={preview} alt="Your list" className="w-28 h-36 object-cover rounded-xl border border-slate-200 shrink-0" />
-                  <div className="space-y-2">
-                    {busy && (
-                      <p className="text-sm font-semibold text-emerald-700 flex items-center gap-2">
-                        <Loader2 className="w-4 h-4 animate-spin" /> Reading your list…
-                      </p>
-                    )}
-                    {!busy && (
-                      <button
-                        onClick={() => {
-                          setPreview('');
-                          setError('');
-                          setTimeout(() => fileRef.current?.click(), 0);
-                        }}
-                        className="text-xs font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 cursor-pointer"
-                      >
-                        <Upload className="w-3.5 h-3.5" /> Use another picture
-                      </button>
-                    )}
-                  </div>
+                <div className="flex flex-col items-center text-center gap-3 py-2">
+                  <img src={preview} alt="Your list" className="w-28 h-36 object-cover rounded-xl border border-slate-200" />
+                  {busy && (
+                    <p className="text-sm font-semibold text-emerald-700 flex items-center justify-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Reading your list…
+                    </p>
+                  )}
+                  {!busy && error && (
+                    <p className="text-sm font-semibold text-red-600 max-w-sm flex items-start justify-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /> {error}
+                    </p>
+                  )}
+                  {!busy && (
+                    <button
+                      onClick={() => {
+                        setPreview('');
+                        setError('');
+                        setTimeout(() => fileRef.current?.click(), 0);
+                      }}
+                      className="px-5 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-600/25"
+                    >
+                      <Upload className="w-4 h-4" /> Upload another picture
+                    </button>
+                  )}
                 </div>
               )}
-              {error && (
-                <p className="text-xs font-semibold text-red-600 bg-red-50 border border-red-100 rounded-xl p-3 flex items-start gap-2">
+              {!preview && error && (
+                <p className="text-xs font-semibold text-red-600 bg-red-50 border border-red-100 rounded-xl p-3 flex items-start justify-center gap-2 text-center">
                   <AlertCircle className="w-4 h-4 shrink-0 mt-px" /> {error}
                 </p>
               )}
@@ -594,18 +656,18 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
                 </p>
               </div>
 
-              {best.length > 0 && (
+              {!(qtyScreen && curPicked) && best.length > 0 && (
                 <div>
                   <p className="text-xs font-bold text-slate-500 mb-2">{best.length === 1 ? 'Best match' : 'Best matches'}</p>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {best.map(({ c, p }, k) => (
-                      <OptionCard key={p.id} n={k + 1} p={p} qty={c.quantity} selected={cur.picked === c.id} onPick={() => update(idx, { picked: c.id, qty: c.quantity, skipped: false })} />
+                      <OptionCard key={p.id} n={k + 1} p={p} qty={c.quantity} selected={cur.picked === c.id} onPick={() => choose(c.id, c.quantity)} />
                     ))}
                   </div>
                 </div>
               )}
 
-              {more.length > 0 && (
+              {!(qtyScreen && curPicked) && more.length > 0 && (
                 <div>
                   <button
                     onClick={() => setShowMore((v) => !v)}
@@ -617,18 +679,19 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
                   {showMore && (
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-2">
                       {more.map(({ c, p }, k) => (
-                        <OptionCard key={p.id} n={best.length + k + 1} p={p} qty={c.quantity} selected={cur.picked === c.id} onPick={() => update(idx, { picked: c.id, qty: c.quantity, skipped: false })} />
+                        <OptionCard key={p.id} n={best.length + k + 1} p={p} qty={c.quantity} selected={cur.picked === c.id} onPick={() => choose(c.id, c.quantity)} />
                       ))}
                     </div>
                   )}
                 </div>
               )}
 
-              {best.length === 0 && (
+              {!(qtyScreen && curPicked) && best.length === 0 && (
                 <p className="text-xs text-slate-500">We couldn't match this line automatically. Search our store below, or skip it.</p>
               )}
 
               {/* search the store (always available, essential when nothing matched) */}
+              {!(qtyScreen && curPicked) && (
               <div>
                 <div className="relative">
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
@@ -643,28 +706,69 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
                     {found.length === 0 && <p className="text-xs text-slate-400 col-span-full">Nothing found for “{query}”.</p>}
                     {found.map((p) => (
-                      <OptionCard key={p.id} p={p} qty={1} selected={cur.picked === Number(p.id)} onPick={() => update(idx, { picked: Number(p.id), qty: 1, skipped: false })} />
+                      <OptionCard key={p.id} p={p} qty={1} selected={cur.picked === Number(p.id)} onPick={() => choose(Number(p.id), 1)} />
                     ))}
                   </div>
                 )}
               </div>
+              )}
 
-              {curPicked && (
-                <div className="flex items-center justify-between rounded-2xl border border-emerald-200 bg-emerald-50/50 px-4 py-3">
-                  <p className="text-sm font-bold text-slate-900 truncate pr-3">{curPicked.name}</p>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs text-slate-500">Quantity</span>
-                    <button onClick={() => update(idx, { qty: Math.max(1, cur.qty - 1) })} className="w-8 h-8 rounded-full border border-slate-300 bg-white flex items-center justify-center cursor-pointer">
-                      <Minus className="w-4 h-4" />
+              {qtyScreen && curPicked && (
+                <div className="rounded-3xl border border-emerald-200 bg-emerald-50/40 p-6 flex flex-col items-center text-center gap-3">
+                  <div className="h-32 flex items-center justify-center">
+                    {curPicked.image ? <img src={curPicked.image} alt={curPicked.name} className="max-h-full max-w-full object-contain" /> : <span className="text-6xl">{curPicked.icon}</span>}
+                  </div>
+                  <div>
+                    <p className="text-base font-black text-slate-900">{curPicked.name}</p>
+                    <p className="text-xs text-slate-500">{curPicked.size} · {money(curPicked.price)}</p>
+                  </div>
+                  {cur.line.qty_text && <p className="text-xs text-slate-500">You wrote: <span className="font-bold text-slate-700">{cur.line.qty_text}</span></p>}
+                  <p className="text-sm font-bold text-slate-800 mt-1">How many do you want?</p>
+                  <div className="flex items-center gap-4">
+                    <button onClick={() => update(idx, { qty: Math.max(1, cur.qty - 1) })} className="w-12 h-12 rounded-full border border-slate-300 bg-white flex items-center justify-center cursor-pointer hover:bg-slate-50" aria-label="Less">
+                      <Minus className="w-5 h-5" />
                     </button>
-                    <span className="w-8 text-center text-base font-black">{cur.qty}</span>
-                    <button onClick={() => update(idx, { qty: Math.min(99, cur.qty + 1) })} className="w-8 h-8 rounded-full border border-slate-300 bg-white flex items-center justify-center cursor-pointer">
-                      <Plus className="w-4 h-4" />
+                    <span className="w-14 text-center text-3xl font-black text-slate-900">{cur.qty}</span>
+                    <button onClick={() => update(idx, { qty: Math.min(99, cur.qty + 1) })} className="w-12 h-12 rounded-full border border-slate-300 bg-white flex items-center justify-center cursor-pointer hover:bg-slate-50" aria-label="More">
+                      <Plus className="w-5 h-5" />
                     </button>
                   </div>
+                  <p className="text-sm font-black text-emerald-700">{money((curPicked.price ?? 0) * cur.qty)}</p>
+                  <button
+                    onClick={() => {
+                      qtyModeRef.current = null;
+                      setQtyScreen(false);
+                      setPromptTick((n) => n + 1);
+                    }}
+                    className="text-xs font-bold text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                  >
+                    Change the product
+                  </button>
                 </div>
               )}
             </>
+          )}
+
+          {/* 5. added to the cart: what next? */}
+          {step === 'added' && (
+            <div className="flex flex-col items-center text-center gap-3 py-8">
+              <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                <CheckCircle2 className="w-9 h-9" />
+              </div>
+              <p className="text-lg font-black text-slate-900">{added.n} item{added.n === 1 ? '' : 's'} added to your cart</p>
+              <p className="text-sm text-slate-500">Total {money(added.total)} · What would you like to do next?</p>
+              <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
+                <button onClick={goCheckout} className="px-6 py-3 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm shadow-md shadow-emerald-600/30 flex items-center gap-2 cursor-pointer">
+                  <ShoppingCart className="w-4 h-4" /> Checkout
+                </button>
+                <button onClick={() => { stopVoice(); close(); }} className="px-5 py-3 rounded-full bg-white border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 flex items-center gap-2 cursor-pointer">
+                  <Store className="w-4 h-4" /> Keep browsing
+                </button>
+                <button onClick={() => reset()} className="px-5 py-3 rounded-full bg-white border border-emerald-300 text-emerald-800 font-bold text-sm hover:bg-emerald-50 flex items-center gap-2 cursor-pointer">
+                  <Camera className="w-4 h-4" /> Add more products
+                </button>
+              </div>
+            </div>
           )}
 
           {/* 4. summary */}
@@ -747,7 +851,7 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
                 disabled={cur?.picked == null}
                 className="px-6 py-3 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm shadow-md shadow-emerald-600/30 flex items-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {idx + 1 < rows.length ? 'Confirm & next' : 'Confirm & finish'} <ArrowRight className="w-4 h-4" />
+                {!qtyScreen ? 'Choose quantity' : idx + 1 < rows.length ? 'Confirm & next' : 'Confirm & finish'} <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
