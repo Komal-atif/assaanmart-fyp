@@ -744,7 +744,41 @@ def detect_families(text: str):
         found = [k for k, _ in sorted(placed, key=lambda kv: kv[1])]
     if len(found) >= 2:
         found = _drop_explained(text, found)
+    if found and not answering:
+        found = _rescue_by_catalogue(text, found)
     return found
+
+
+_RESCUE_CACHE = {}
+
+
+def _rescue_by_catalogue(text, found):
+    """"Lays / leis in french cheese flavor": the word 'cheese' points to the Cheese family, but the rare words together
+    ('french' + 'cheese') belong to Lay's chips. When one product of ANOTHER family matches the sentence clearly better than
+    anything in the family we found, that family is the right one. Only for the clear single-family case."""
+    fams = {f for f, _ in found}
+    if len(fams) != 1 or len(PRODUCTS) < 20 or len(tokens(text)) < 2:
+        return found
+    key = (text.lower(), tuple(sorted(fams)))
+    if key in _RESCUE_CACHE:
+        return _RESCUE_CACHE[key]
+    result = found
+    try:
+        allp = list(PRODUCTS.values())
+        scores = rank_products(allp, text)
+        if scores:
+            best = max(scores)
+            bp = allp[scores.index(best)]
+            mine = max((sc for p, sc in zip(allp, scores) if p["family"] in fams), default=0.0)
+            if best >= 3.0 and bp["family"] not in fams and best >= mine + 1.5 and bp["family"] in BY_FAMILY:
+                print(f"🔁 family corrected by product words: {sorted(fams)} -> {bp['family']}  ({bp['name']})")
+                result = [(bp["family"], None)]
+    except Exception as e:
+        print(f"⚠️ family check skipped: {e}")
+    if len(_RESCUE_CACHE) > 500:
+        _RESCUE_CACHE.clear()
+    _RESCUE_CACHE[key] = result
+    return result
 
 
 def detect_for_utt(utt):
@@ -989,7 +1023,7 @@ def _verify_token_sync(token):
         print("⚠️ SUPABASE_URL / SUPABASE_ANON_KEY are missing in backend/.env -> nobody can be recognised as signed in")
         return None
     try:
-        r = http.get(f"{SUPABASE_URL}/auth/v1/user", headers={"apikey": SUPABASE_ANON_KEY, "Authorization": f"Bearer {token}"}, timeout=6)
+        r = http.get(f"{SUPABASE_URL}/auth/v1/user", headers={"apikey": SUPABASE_ANON_KEY, "Authorization": f"Bearer {token}"}, timeout=4)
         if r.status_code != 200:
             print(f"⚠️ Supabase rejected the login token ({r.status_code}): {r.text[:160]} — check that SUPABASE_URL / SUPABASE_ANON_KEY in backend/.env are the SAME project as the frontend")
         if r.status_code == 200:
@@ -1002,6 +1036,10 @@ def _verify_token_sync(token):
             return user
     except Exception as e:
         print(f"⚠️ token check failed: {e}")
+        if hit:                                   # network hiccup: the customer is still the same person -> keep their session
+            _TOKEN_CACHE[token] = (time.time() + 60, hit[1])
+            return hit[1]
+        return "UNREACHABLE"                      # never seen this token and Supabase did not answer: do NOT pretend to be a guest
     return None
 
 
@@ -1012,6 +1050,8 @@ async def identify(request):
     user = None
     if auth.lower().startswith("bearer "):
         user = await asyncio.to_thread(_verify_token_sync, auth[7:].strip())
+        if user == "UNREACHABLE":                 # a guest session would look like an empty basket: ask the browser to retry instead
+            raise HTTPException(status_code=503, detail="Sign-in check is slow right now, please try again.")
     if REQUIRE_LOGIN and user is None:
         raise HTTPException(status_code=401, detail="login required")
     sid = f"user:{user['id']}" if user else (request.headers.get("x-session-id") or "default")
@@ -1430,7 +1470,7 @@ def rank_products(pool, clause):
     learned words). Rare words count more, exact words count more than look-alike spellings. -> list of scores or None."""
     if not clause or not pool:
         return None
-    skip = set(FILLER) | set(NUM_WORDS) | set(UNIT_CANON) | _UR_STOP | set(_ONES) | set(_TENS) | _SAU
+    skip = set(FILLER) | set(NUM_WORDS) | set(UNIT_CANON) | _UR_STOP | set(_ONES) | set(_TENS) | _SAU | GENERIC_DESCRIBERS | CHATTER
     said = [w for w in dict.fromkeys(_tokens(clause)) if w not in skip and not w.isdigit()]
     if not said:
         return None
@@ -1500,12 +1540,26 @@ def build_token_index():
     _INDEX_READY = True
 
 
+# Describing words that happen to occur in only ONE family of the dataset (e.g. "flavor" only in a kids' toothpaste name)
+# must never decide the family: "Lay's in french cheese flavor" is chips, not toothpaste.
+GENERIC_DESCRIBERS = {"flavor", "flavors", "flavour", "flavours", "flavored", "flavoured", "taste", "tasty", "type", "types",
+                      "kind", "kinds", "variety", "original", "classic", "regular", "special", "extra", "new", "kids",
+                      "فلیور", "فلیورز", "ذائقہ", "ٹیسٹ", "ٹائپ", "قسم", "کلاسک", "اوریجنل", "ریگولر"}
+
+
+# conversation words that are not product words ("Yes. I want ... The offer price seventy")
+CHATTER = {"yes", "yeah", "no", "nope", "offer", "price", "prices", "rate", "cost", "rupees", "rupee", "rs", "pkr", "rupay", "want",
+           "need", "give", "show", "please", "okay", "ok", "hello", "hi", "sorry", "actually", "only", "just", "too", "also", "its", "it",
+           "this", "that", "those", "these", "my", "your", "in", "on", "at", "is", "are", "was", "am", "do", "does", "did", "have", "has",
+           "can", "will", "would", "like", "get", "put", "add", "take", "buy", "order", "item", "items", "thing", "things", "one", "ones"}
+
+
 def infer_families(text, known):
     """Finds item families from words that only (or mostly) occur in ONE family of the dataset, even when the speech
     to text spelled them differently ("پیش" / "پیسٹ", "کال گیٹ" = Colgate). -> [(family, position)] for NEW families."""
     if not _INDEX_READY:
         build_token_index()
-    skip = set(FILLER) | set(NUM_WORDS) | set(UNIT_CANON) | _UR_STOP | set(_ONES) | set(_TENS) | _SAU
+    skip = set(FILLER) | set(NUM_WORDS) | set(UNIT_CANON) | _UR_STOP | set(_ONES) | set(_TENS) | _SAU | GENERIC_DESCRIBERS
     toks = [(m_.group(), m_.start()) for m_ in re.finditer(r"[\w]+", text.lower().translate(ARABIC_DIGITS)) if len(m_.group()) >= 2]
     score, first, sure = {}, {}, set()
 
@@ -1838,12 +1892,30 @@ def _words_point_to(p, options, text):
     return bool((mine - others) & heard)
 
 
+QR_RUPEE = re.compile(r"\brs\.?(?![a-z])|\brupee|\brupay|\brupiy|\bpkr\b|روپ|ریال", re.I)
+
+
+def match_by_price(text, options):
+    """"fifty rupees pack" / "50 rupay wala" / "پچاس روپے والا" = the option that costs 50 (or is named 'Rs 50 Pack').
+    Only used when the customer says a money word, so a plain '50' is never taken for a price."""
+    if not QR_RUPEE.search(text.lower()):
+        return []
+    am = parse_amount(text)
+    if am is None or am.has_unit or am.value <= 0:
+        return []
+    n = am.value
+    return [v for v in options if abs(float(v["price"]) - n) < 0.5 or re.search(rf"\brs\.?\s*{int(n)}(?!\d)", v["name"], re.I)]
+
+
 async def handle_variant(utt, lang):
     bc = brand_change(utt, lang)
     if bc:
         return bc
     variants, shown = current["variants"], current["shown"] or current["variants"]
     full = current.get("all_variants") or variants
+    ph = match_by_price(utt.both, full)                # "I want the fifty rupees pack"
+    if ph and len(ph) < len(full):
+        return select_product(lang, ph[0]) if len(ph) == 1 else ask_variant(lang, ph)
     grp = item_groups(utt.both, full)                  # "I want both the potato and the tomato" -> take them one after another
     if len(grp) >= 2:
         first = narrow_products(full, grp[0]["text"])
@@ -1916,6 +1988,9 @@ QR_NUM_WORDS = {
     "eight": 8, "aath": 8, "آٹھ": 8, "nine": 9, "nau": 9, "نو": 9, "ten": 10, "das": 10, "دس": 10,
     "half": 0.5, "aadha": 0.5, "adha": 0.5, "aadhi": 0.5, "adhi": 0.5, "آدھا": 0.5, "آدھی": 0.5,
     "dedh": 1.5, "derh": 1.5, "ڈیڑھ": 1.5, "dhai": 2.5, "dhaai": 2.5, "ڈھائی": 2.5,
+    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90, "saath": 60, "sattar": 70, "assi": 80, "nabbay": 90, "ninety": 90,
+    "بیس": 20, "تیس": 30, "چالیس": 40, "ساٹھ": 60, "ستر": 70, "اسی": 80, "نوے": 90,
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "pachas": 50, "pachaas": 50, "پچاس": 50, "bees": 20, "bis": 20, "tees": 30, "chalis": 40,
     "sawa": 1.25, "سوا": 1.25, "paune": 0.75, "pauna": 0.75, "پونے": 0.75,
 }
 
@@ -1962,8 +2037,13 @@ def _qr_fmt(n: float) -> str:
     return str(int(n)) if float(n).is_integer() else (f"{n:.2f}".rstrip("0").rstrip("."))
 
 
+QR_MULT = {"hundred": 100, "sau": 100, "سو": 100, "thousand": 1000, "hazar": 1000, "hazaar": 1000, "ہزار": 1000}
+
+
 def _qr_words(text: str) -> list[str]:
     text = text.translate(QR_DIGITS).lower()
+    text = re.sub(r"کے\s*جی|کی\s*جی|کے\.جی", " kg ", text)            # "پانچ کے جی" = 5 kg
+    text = re.sub(r"\bk\.?g\.?\b", " kg ", text)
     text = re.sub(r"(\d)([a-z؀-ۿ])", r"\1 \2", text)      # 2kg -> 2 kg
     text = re.sub(r"([a-z؀-ۿ])(\d)", r"\1 \2", text)
     return re.findall(r"\d+(?:\.\d+)?|[a-z؀-ۿ']+", text)
@@ -1983,7 +2063,17 @@ def parse_amount(text: str) -> Optional[QRAmount]:
         n = _qr_number(tok)
         if n is None:
             continue
-        nxt = toks[i + 1] if i + 1 < len(toks) else ""
+        # "five hundred" / "paanch sau" / "two hundred fifty" / "ek hazar"
+        j = i + 1
+        if j < len(toks) and toks[j] in QR_MULT:
+            n *= QR_MULT[toks[j]]
+            j += 1
+            if j < len(toks):
+                extra = _qr_number(toks[j])
+                if extra is not None and 0 < extra < 100 and extra == int(extra):
+                    n += extra
+                    j += 1
+        nxt = toks[j] if j < len(toks) else ""
         if nxt in QR_UNITS:
             u, dim, mult = QR_UNITS[nxt]
             return QRAmount(n, u, dim, n * mult)
@@ -2312,11 +2402,26 @@ def switch_product(utt, lang):
     return None
 
 
+QR_REFUSE = ("نہیں چاہیے", "نہیں چاہئے", "نہی چاہیے", "نہیں چاہیۓ", "nahi chahiye", "nahin chahiye", "nai chahiye", "nahi chahie",
+             "nahi chaiye", "nai chaiye", "don't want", "do not want", "dont want", "not interested", "no thanks", "no thank you",
+             "skip", "چھوڑو", "چھوڑ دو", "چھوڑیں", "ہٹا دو", "hata do", "chor do", "chhor do", "cancel this", "remove this")
+QR_BARE_NO = {"no", "nope", "nahi", "nahin", "nai", "نہیں", "نہی"}
+
+
+def refuses_item(text: str) -> bool:
+    low = " ".join(re.sub(r"[.,!?؟،۔]", " ", text.lower()).split())
+    if parse_amount(low) is not None and any(ch.isdigit() for ch in low.translate(QR_DIGITS)):
+        return False
+    return low in QR_BARE_NO or any(ph in low for ph in QR_REFUSE)
+
+
 async def handle_quantity(utt, lang):
     p = current["product"]
     sw = switch_product(utt, lang)                 # "no, I want the chicken mince 1kg" -> go back and pick that one
     if sw:
         return sw
+    if refuses_item(utt.both):                     # "I don't want this one" -> drop it and go to the next item
+        return skip_current(lang)
     want = size_pairs(utt.both, spoken=True)           # "I want the two hundred gram one" = a pack size, NOT quantity 2
     if want and not same_size(want, size_pairs(p["name"] + " " + p["size"])):
         full = current.get("all_variants") or current.get("variants") or []
@@ -3147,6 +3252,41 @@ class TTSJob:
         self.chunks, self.done = [], False
 
 
+def clean_for_tts(text: str) -> str:
+    """edge-tts answers 'No audio was received' for text it can not read (dashes, Arabic semicolons, emoji, markdown ...).
+    Turn those into plain pauses so the voice always gets something it can speak."""
+    t_ = re.sub(r"[\u2014\u2013\u2012\u2015]", ", ", text or "")              # em / en dashes
+    t_ = t_.replace("؛", "،").replace(";", ",").replace("۔", ".").replace("؟", "?")
+    t_ = re.sub(r"[*_#`~|<>{}\[\]\\^]", " ", t_)
+    t_ = re.sub(r"[\U0001F000-\U0001FFFF\u2600-\u27BF\uFE0F]", " ", t_)           # emoji
+    t_ = t_.replace("&", " and ").replace("₨", "Rs ")
+    return re.sub(r"\s+", " ", t_).strip()
+
+
+async def _edge_collect(text: str, voice: str):
+    chunks = []
+    async for chunk in edge_tts.Communicate(text, voice).stream():
+        if chunk["type"] == "audio":
+            chunks.append(chunk["data"])
+    return chunks
+
+
+async def _edge_urdu(text: str):
+    """Free Urdu voice with fallbacks: cleaned text, the other Urdu voice, and in the end the English voice (so the
+    customer still hears the answer instead of silence)."""
+    cleaned = clean_for_tts(text)
+    for voice, txt in (("ur-PK-UzmaNeural", cleaned), ("en-US-AriaNeural", cleaned)):      # one Urdu try (a second Urdu voice fails the same way)
+        if not txt:
+            break
+        try:
+            chunks = await _edge_collect(txt, voice)
+            if chunks:
+                return chunks
+        except Exception as e:
+            print(f"⚠️ edge-tts {voice} failed: {e}")
+    return []
+
+
 async def _run_tts(job):
     key = (job.lang, job.text)
     try:
@@ -3158,18 +3298,11 @@ async def _run_tts(job):
             if data:
                 job.chunks.append(data)
             else:                                   # Uplift failed / out of balance -> free Urdu neural voice
-                try:
-                    async for chunk in edge_tts.Communicate(job.text, "ur-PK-UzmaNeural").stream():
-                        if chunk["type"] == "audio":
-                            job.chunks.append(chunk["data"])
-                except Exception as e:
-                    print(f"⚠️ edge-tts Urdu fallback failed: {e}")
+                job.chunks.extend(await _edge_urdu(job.text))
         else:
             for attempt in range(2):
                 try:
-                    async for chunk in edge_tts.Communicate(job.text, "en-US-AriaNeural").stream():
-                        if chunk["type"] == "audio":
-                            job.chunks.append(chunk["data"])
+                    job.chunks.extend(await _edge_collect(clean_for_tts(job.text) or job.text, "en-US-AriaNeural"))
                     break
                 except Exception as e:
                     print(f"⚠️ edge-tts attempt {attempt + 1} failed: {e}")
@@ -3374,8 +3507,11 @@ async def greet(request: Request):
         if resume and current_cart is not None:
             lang = lang_q or session_language or "english"
             session_language, language_chosen = lang, True
-            msg = t(lang, "Welcome back! What else would you like to order?", "خوش آمدید! اور کیا چاہیے؟")
-            return {"reply_text": msg, "audio_url": tts_url(msg, lang), "options": None,
+            n = len(current_cart)
+            msg = t(lang, f"Welcome back! You have {n} item{'' if n == 1 else 's'} in your cart. What else would you like to order?" if n
+                    else "Welcome back! What would you like to order?",
+                    f"خوش آمدید! آپ کی ٹوکری میں {n} چیزیں ہیں۔ اور کیا چاہیے؟" if n else "خوش آمدید! کیا چاہیے؟")
+            return {"reply_text": msg, "audio_url": tts_url(msg, lang), "options": ui_options(lang) if current else None,
                     "cart": cart_snapshot(), "history": [{"role": "assistant", "content": msg}], "language": lang}
         reset_session_state()
         if lang_q:
@@ -4611,13 +4747,42 @@ def _cand_view(p, qty):
             "image_url": p.get("image_url"), "quantity": qty}
 
 
+_BRAND_NORM = {}
+
+
+def _bnorm(x):
+    return re.sub(r"[^a-z0-9\u0600-\u06FF]", "", (x or "").lower())
+
+
+def brands_in_text(text):
+    """Brands named in the text, spelled any way ("Lays" = "Lay's" = "lay s"). -> {normalised brand: families}"""
+    if len(_BRAND_NORM) != len(BRAND_FAMS):
+        _BRAND_NORM.clear()
+        for k_, fams_ in BRAND_FAMS.items():
+            n_ = _bnorm(k_)
+            if len(n_) >= 3:
+                _BRAND_NORM.setdefault(n_, set()).update(fams_)
+    words = [_bnorm(w) for w in re.findall(r"[\w']+", (text or "").lower())]
+    cands = set(w for w in words if len(w) >= 3) | {a_ + b_ for a_, b_ in zip(words, words[1:]) if a_ and b_}
+    return {n_: f_ for n_, f_ in _BRAND_NORM.items() if n_ in cands}
+
+
 def scan_match(text, qty_text, english=None):
     """One list line -> {"status": matched | choose | unknown, "candidates": [...]}. Call inside use_session()."""
     clause = f"{text} {qty_text or ''}".strip()
     pairs = detect_families(clause)
+    # a brand on the line decides the family: "Lays french cheese" is Lay's chips, not cheese
+    brands = brands_in_text(text)
+    if brands:
+        bfams = set().union(*brands.values())
+        kept = [(f, pt) for f, pt in pairs if f in bfams]
+        pairs = kept or [(f, None) for f in sorted(bfams) if f in BY_FAMILY]
     pool = []
     for fam, pt in pairs:
         pool += [p for p in pool_for(fam, pt) if p not in pool]
+    if brands and pool:
+        only = [p for p in pool if _bnorm(p["brand"]) in brands]
+        pool = only or pool
     if not pool:
         pool = list(PRODUCTS.values())
         scores = rank_products(pool, text) or []

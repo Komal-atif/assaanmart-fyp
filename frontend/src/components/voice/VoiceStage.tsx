@@ -4,10 +4,11 @@ import { AssistantBot, BotState, HeldItem } from './AssistantBot';
 import type { VoicePhase } from './VoiceAvatar';
 
 /* Voice stage.
-   Top: what the agent says (subtitle) + a status pill, then "You said: ...", exactly like the photo scanner.
-   Middle: the assistant (no circle behind it, no spinning ring while thinking). It speaks, listens, holds the
-   products it offers in BOTH hands while the customer chooses, and hands over the item that was just added to
-   the basket without dancing. The floor shadow is shown under it. No sound waves.                                           */
+   Top: title, "You said: ..." (shown correctly for Urdu and English) and a status pill.
+   Middle: the assistant at a moderate, screen-based size, centred in the green card that fills the window height.
+   No circle behind it, no spinning ring or waves while thinking. It speaks, listens, holds the products it
+   offers in BOTH hands while the customer chooses, and hands over the item that was just added to the basket
+   (without dancing). The floor shadow is shown under it.                                                   */
 
 interface StageProps {
   phase: VoicePhase;
@@ -63,7 +64,7 @@ export const VoiceStage: React.FC<StageProps> = ({ phase, reply, heard, notice, 
   }, [cart]);
   useEffect(() => () => window.clearTimeout(addTimer.current), []);
 
-  /* ---------- products on offer: the first two are held up, all of them are tappable below ---------- */
+  /* ---------- products on offer: the first two are held up, all of them are tappable in the pop-up ---------- */
   const items: any[] = useMemo(() => (options?.items?.length ? options.items : options?.product ? [options.product] : []), [options]);
   const isProducts = items.length > 0 && options?.stage !== 'quantity';
   const holding = !adding && isProducts;
@@ -72,21 +73,31 @@ export const VoiceStage: React.FC<StageProps> = ({ phase, reply, heard, notice, 
   const qtyProduct = options?.stage === 'quantity' && !adding && options?.product ? toHeld(options.product) : null;
   const holdRight = holding ? (items[1] ? toHeld(items[1]) : items.length === 1 ? toHeld(items[0]) : null) : qtyProduct;
 
-  // no 'happy' pose any more: when an item is added the bot keeps its normal pose (no hop, no cheering) and just passes the item on
+  // no 'happy' pose: when an item is added the bot keeps its normal pose and just passes the item on
   const botState: BotState = phase === 'listening' ? 'listening' : phase === 'speaking' ? 'talking' : holding ? 'showing' : 'idle';
   const status = STATUS[phase] || STATUS.off;
 
+  const hint = phase === 'listening' ? 'Listening… say your item' : reply ? 'Your words will appear here' : 'Connecting to your assistant…';
+
   return (
-    <div className="relative overflow-hidden rounded-3xl border border-[#e0f4e7] bg-gradient-to-b from-white via-[#f3fbf6] to-[#e0f4e7] flex flex-col lg:h-full lg:min-h-0">
-      {/* title, what the agent says, status */}
-      <div className="flex items-start gap-3 px-4 sm:px-5 pt-4 pb-3">
+    <div className="relative overflow-hidden rounded-3xl border border-[#e0f4e7] bg-gradient-to-b from-white via-[#f3fbf6] to-[#d6f0e0] flex flex-col flex-1 h-full lg:min-h-[calc(100dvh-10rem)]">
+      {/* title, what the customer said, status */}
+      <div className="shrink-0 flex items-start gap-3 px-4 sm:px-5 pt-4 pb-3">
         <span className="mt-0.5 w-9 h-9 shrink-0 rounded-xl bg-[#e0f4e7] text-[#1DAA61] flex items-center justify-center">
           <Mic className="w-5 h-5" />
         </span>
-        <div className="min-w-0 flex-1" role="status" aria-live="polite">
+        <div className="min-w-0 flex-1 text-left" dir="ltr" role="status" aria-live="polite">
           <h3 className="text-base sm:text-lg font-black text-[#1f5233] leading-tight">Voice order</h3>
-          <p className="mt-0.5 text-[13px] sm:text-sm text-[#4d7a5c] leading-snug line-clamp-3" dir="auto">
-            {reply || 'Connecting to your assistant…'}
+          {/* the label stays on the left; the words are isolated so Urdu (right-to-left) never flips the line */}
+          <p className="mt-1 text-[13px] sm:text-sm text-[#4d7a5c] leading-snug line-clamp-2 break-words">
+            {heard ? (
+              <>
+                <span className="font-bold text-[#2a6b43]">You said: </span>
+                <bdi className="font-semibold text-[#1f5233]">“{heard}”</bdi>
+              </>
+            ) : (
+              <span className="italic">{hint}</span>
+            )}
           </p>
         </div>
         <span className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold shadow-sm transition-colors ${status.cls}`}>
@@ -95,27 +106,26 @@ export const VoiceStage: React.FC<StageProps> = ({ phase, reply, heard, notice, 
         </span>
       </div>
 
-      {/* what the customer said */}
-      <div className="px-4 sm:px-5 py-2.5 border-t border-[#e0f4e7] bg-white/60 text-xs sm:text-[13px] text-[#4d7a5c]" dir="auto">
-        {heard ? <>You said: <span className="font-semibold text-[#2a6b43]">“{heard}”</span></> : phase === 'listening' ? 'Listening… say your item' : 'Your words will appear here'}
-      </div>
+      <div className="shrink-0 border-t border-[#e0f4e7]" />
 
-      {/* the assistant with its floor shadow: no circle, no thinking ring; on desktop the robot scales to the space left in the window (it never makes the window taller than the screen) */}
-      <div className="relative w-full max-w-[430px] mx-auto mt-1 px-2 flex-none h-[38vh] min-h-[200px] lg:flex-1 lg:h-auto lg:min-h-0">
-        <AssistantBot
-          state={botState}
-          viewBox="335 215 600 640"
-          holdLeft={holdLeft}
-          holdRight={holdRight}
-          adding={adding}
-          className="relative w-full h-full"
-        />
+      {/* the assistant: a fixed, screen-based size (never taller than ~40% of the screen), centred in the green card */}
+      <div className="flex-1 min-h-0 flex items-center justify-center py-2">
+        <div className="relative w-full max-w-[400px] px-2" style={{ height: 'min(38dvh, 340px)', minHeight: 190 }}>
+          <AssistantBot
+            state={botState}
+            viewBox="335 215 600 640"
+            holdLeft={holdLeft}
+            holdRight={holdRight}
+            adding={adding}
+            className="relative w-full h-full"
+          />
+        </div>
       </div>
 
       {/* choices are shown in the selection pop-up (VoiceProductModal) */}
 
       {notice && (
-        <div className="mx-4 sm:mx-5 mb-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold px-3 py-2 flex items-center justify-between gap-2 text-left">
+        <div className="shrink-0 mx-4 sm:mx-5 mb-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold px-3 py-2 flex items-center justify-between gap-2 text-left">
           <span>{notice}</span>
           {phase === 'off' && (
             <button onClick={onRetry} className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-amber-300 hover:bg-amber-100 cursor-pointer">

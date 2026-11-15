@@ -3,6 +3,8 @@ import { useRef, useCallback, useEffect } from 'react';
 export interface UseVoiceLoopOptions {
   onUtterance: (blob: Blob) => void;
   onBargeIn?: () => void;
+  onIdle?: () => void;         // nobody said anything for `idleMs`: the caller repeats the question
+  idleMs?: number;             // default 30000
   silenceThresholdMs?: number; // quiet time (relative to the user's own voice) before the audio is sent (default 900ms)
   maxUtteranceMs?: number;     // safety stop: send whatever was recorded after this long (default 30000ms): background voices can never keep the mic open forever
 }
@@ -10,6 +12,8 @@ export interface UseVoiceLoopOptions {
 export function useVoiceLoop({
   onUtterance,
   onBargeIn,
+  onIdle,
+  idleMs = 30000,
   silenceThresholdMs = 900,
   maxUtteranceMs = 30000,
 }: UseVoiceLoopOptions) {
@@ -29,9 +33,13 @@ export function useVoiceLoop({
   const noiseFloorRef = useRef<number>(0.03);   // slow average of the room's background level
   const userLevelRef = useRef<number>(0);       // average level of THIS customer's speech in the current utterance
   const aboveSinceRef = useRef<number>(0);      // when the level first rose above the start / barge-in threshold
+  const peakRef = useRef<number>(0);            // loudest level seen in this listening round
   const lastVoiceRef = useRef<number>(0);       // last moment the level was above the speech threshold
   const onUtteranceRef = useRef(onUtterance);  // always the newest callback (no stale closures)
   onUtteranceRef.current = onUtterance;
+  const onIdleRef = useRef(onIdle);
+  onIdleRef.current = onIdle;
+  const bargeBaseRef = useRef<number>(0.03);    // level of the agent's own sound in the room while it speaks
   const listenStartRef = useRef<number>(0);     // when this listening round began (no-speech fallback)
   const speechStartRef = useRef<number>(0);     // when real speech began (for the safety stop)
 
@@ -130,13 +138,14 @@ export function useVoiceLoop({
         const floor = noiseFloorRef.current;
         if (isListeningRef.current) {
           const startT = Math.max(0.08, floor * 1.7);   // sensitive enough for quiet voices / phone mics
-          const bargeT = Math.max(0.22, floor * 3);
+          const bargeT = Math.max(0.10, bargeBaseRef.current * 1.8);   // relative to what the agent's own voice already adds to the room
           // the longer someone keeps talking, the stricter 'silence' becomes (0.5 -> 0.7 of the customer's own level after 8 s),
           // so a TV / people in the background cannot hold the microphone open
           const k = hasSpokenRef.current && now - speechStartRef.current > 8000 ? 0.7 : 0.5;
           const threshold = isBargeInRef.current ? bargeT : hasSpokenRef.current ? Math.max(startT, userLevelRef.current * k) : startT;
-          const needMs = isBargeInRef.current ? 500 : 200;
+          const needMs = isBargeInRef.current ? 300 : 200;
 
+          if (!isBargeInRef.current && norm > peakRef.current) peakRef.current = norm;
           if (norm > threshold) {
             if (!aboveSinceRef.current) aboveSinceRef.current = now;
             const sustained = now - aboveSinceRef.current >= needMs;
@@ -156,21 +165,25 @@ export function useVoiceLoop({
             }
           } else {
             aboveSinceRef.current = 0;
+            if (isBargeInRef.current) bargeBaseRef.current = bargeBaseRef.current * 0.95 + norm * 0.05;   // follow the agent's own sound
             if (hasSpokenRef.current && !silenceTimerRef.current) {
               silenceTimerRef.current = setTimeout(() => finishUtterance(), silenceThresholdMs);
             }
           }
 
-          // nobody spoke for 12 s: quietly start a fresh round (the recording is thrown away, never sent, so room noise
-          // can not be 'heard' as an order). Not while the agent is talking.
-          if (!hasSpokenRef.current && !isBargeInRef.current && now - listenStartRef.current > 12000) {
+          // nobody said anything for 30 s (and the room was quiet): the caller asks again / repeats. Nothing is sent.
+          if (!hasSpokenRef.current && !isBargeInRef.current && peakRef.current <= 0.12 && now - listenStartRef.current > idleMs) {
             listenStartRef.current = now;
             chunksRef.current = [];
-            if (recorderRef.current && recorderRef.current.state === 'recording') startRecorder();
+            const cb = onIdleRef.current;
+            if (cb) { isListeningRef.current = false; discardRecorder(); cb(); }
+            else if (recorderRef.current && recorderRef.current.state === 'recording') startRecorder();
           }
 
-          // safety: never wait forever when something keeps the level up
+          // safety: never wait forever when something keeps the level up. After 30 s the recording is sent and processed,
+          // even when the voice detector never decided that speech started (loud room, quiet voice).
           if (hasSpokenRef.current && now - speechStartRef.current > maxUtteranceMs) finishUtterance();
+          else if (!isBargeInRef.current && peakRef.current > 0.12 && now - listenStartRef.current > maxUtteranceMs) finishUtterance(true);
         } else {
           aboveSinceRef.current = 0;
         }
@@ -184,7 +197,7 @@ export function useVoiceLoop({
     }
 
     return stream;
-  }, [onBargeIn, silenceThresholdMs, maxUtteranceMs]);
+  }, [onBargeIn, silenceThresholdMs, maxUtteranceMs, idleMs]);
 
   const finishUtterance = useCallback((force: boolean = false) => {
     if (!isListeningRef.current) return;
@@ -206,6 +219,7 @@ export function useVoiceLoop({
       hasSpokenRef.current = false;
       userLevelRef.current = 0;
       listenStartRef.current = performance.now();
+      peakRef.current = 0;
       startRecorder();
       return;
     }
@@ -228,6 +242,8 @@ export function useVoiceLoop({
       aboveSinceRef.current = 0;
       chunksRef.current = [];
       listenStartRef.current = performance.now();
+      peakRef.current = 0;
+      bargeBaseRef.current = Math.max(0.03, noiseFloorRef.current);
 
       if (!streamRef.current || !streamRef.current.active) {
         open()

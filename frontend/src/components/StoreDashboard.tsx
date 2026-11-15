@@ -62,6 +62,52 @@ export const getCategoryIcon = (categoryName: string, className: string = "w-5 h
   }
 };
 
+/* ---------------------------------------------------------------------------
+   Category pictures (shown inside the round category buttons instead of icons).
+   Save the files in:   public/products/categories/
+   They are then served from  /products/categories/<file>
+   Square pictures (about 400 x 400 px) work best. To use .webp or .jpg, change CATEGORY_IMAGE_EXT.
+   If a picture is missing the old icon is shown, so nothing breaks while you add them.
+--------------------------------------------------------------------------- */
+const CATEGORY_IMAGE_DIR = '/products/categories';
+const CATEGORY_IMAGE_EXT = 'png';
+
+const CATEGORY_IMAGES: Record<string, string> = {
+  'Fruits & Vegetables': `${CATEGORY_IMAGE_DIR}/fruits-and-vegetables.${CATEGORY_IMAGE_EXT}`,
+  'Dairy': `${CATEGORY_IMAGE_DIR}/dairy.${CATEGORY_IMAGE_EXT}`,
+  'Snacks & Biscuits': `${CATEGORY_IMAGE_DIR}/snacks-and-biscuits.${CATEGORY_IMAGE_EXT}`,
+  'Beverages': `${CATEGORY_IMAGE_DIR}/beverages.${CATEGORY_IMAGE_EXT}`,
+  'Commodities': `${CATEGORY_IMAGE_DIR}/commodities.${CATEGORY_IMAGE_EXT}`,
+  'Bakery & Breakfast': `${CATEGORY_IMAGE_DIR}/bakery-and-breakfast.${CATEGORY_IMAGE_EXT}`,
+  'Meat & Sea Food': `${CATEGORY_IMAGE_DIR}/meat-and-sea-food.${CATEGORY_IMAGE_EXT}`,
+  'Personal Care': `${CATEGORY_IMAGE_DIR}/personal-care.${CATEGORY_IMAGE_EXT}`,
+  'Spices & Sauces': `${CATEGORY_IMAGE_DIR}/spices-and-sauces.${CATEGORY_IMAGE_EXT}`,
+  'Cooking & Baking': `${CATEGORY_IMAGE_DIR}/cooking-and-baking.${CATEGORY_IMAGE_EXT}`,
+};
+
+// any other category name becomes a file name automatically, e.g. "Home Care" -> home-care.png
+const slugify = (name: string) =>
+  name.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+export const getCategoryImage = (categoryName: string) =>
+  CATEGORY_IMAGES[categoryName] ?? `${CATEGORY_IMAGE_DIR}/${slugify(categoryName)}.${CATEGORY_IMAGE_EXT}`;
+
+const CategoryImage: React.FC<{ name: string; iconClass: string }> = ({ name, iconClass }) => {
+  const [failed, setFailed] = useState(false);
+  if (failed) return getCategoryIcon(name, iconClass);
+  return (
+    <img
+      src={getCategoryImage(name)}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      draggable={false}
+      onError={() => setFailed(true)}
+      className="w-full h-full object-cover"
+    />
+  );
+};
+
 export const StoreDashboard: React.FC<StoreDashboardProps> = ({
   categories,
   products,
@@ -296,10 +342,8 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
                         ? 'bg-gradient-to-br from-[#e0f4e7] via-[#f3fbf6] to-[#fbf8f2]'
                         : 'bg-gradient-to-br from-[#ffffff] via-[#fbf8f2] to-[#f3fbf6] group-hover:scale-105'
                     }`}>
-                      <div className={`flex items-center justify-center transition-transform group-hover:scale-110 ${
-                        isSelected ? 'text-[#2a6b43]' : 'text-[#2a6b43]'
-                      }`}>
-                        {getCategoryIcon(c.name, 'w-7 h-7 sm:w-8 sm:h-8 lg:w-9 lg:h-9 stroke-[1.8]')}
+                      <div className="w-full h-full flex items-center justify-center text-[#2a6b43] transition-transform duration-300 group-hover:scale-110">
+                        <CategoryImage name={c.name} iconClass="w-7 h-7 sm:w-8 sm:h-8 lg:w-9 lg:h-9 stroke-[1.8]" />
                       </div>
                     </div>
 

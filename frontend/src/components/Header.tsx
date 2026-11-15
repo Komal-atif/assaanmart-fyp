@@ -26,6 +26,7 @@ interface HeaderProps {
   favoritesCount?: number;
   onOpenFavorites?: () => void;
   cartBtnRef: React.RefObject<HTMLButtonElement | null>;
+  /** change this number to replay the logo intro (page change / modal closed) */
   logoPlayKey?: number;
 }
 
@@ -33,10 +34,7 @@ interface HeaderProps {
 type NavItem = { key: string; view?: AppView; section?: string; label: string };
 // store pages
 const DASH_NAV: NavItem[] = [
-  { key: 'store', view: 'dashboard', label: 'Store' },
-  { key: 'services', view: 'services', label: 'Services' },
-  { key: 'contact', view: 'contact', label: 'Contact Us' },
-];
+];   // the store pages have no page links (Services / Contact Us live only on the landing page)
 // landing page: How it works scrolls to its section on the same page
 const LAND_NAV: NavItem[] = [
   { key: 'how', section: 'how-it-works', label: 'How it works' },
@@ -92,7 +90,6 @@ export const Header: React.FC<HeaderProps> = ({
       if (!inSearch) setShowSearchSuggestions(false);
       if (accountRef.current && !accountRef.current.contains(t)) setAccountOpen(false);
     };
-
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
@@ -114,7 +111,8 @@ export const Header: React.FC<HeaderProps> = ({
     if (n.section) { onNavigateSection(n.section); setAccountOpen(false); }
     else if (n.view) go(n.view);
   };
-  const isLanding = currentView === 'landing';
+  // the landing, Services and Contact Us pages share the same (landing) header
+  const isLanding = currentView === 'landing' || currentView === 'services' || currentView === 'contact';
   const nav = isLanding ? LAND_NAV : DASH_NAV;
   const isActive = (n: { view?: AppView }) => Boolean(n.view) && currentView === n.view;
 
@@ -192,7 +190,7 @@ export const Header: React.FC<HeaderProps> = ({
           {/* logo */}
           <div className="flex items-center gap-3 min-w-0">
             <button
-              onClick={() => (isLanding ? window.scrollTo({ top: 0, behavior: 'smooth' }) : go('landing'))}
+              onClick={() => (currentView === 'landing' ? window.scrollTo({ top: 0, behavior: 'smooth' }) : go('landing'))}
               className="flex items-center gap-2 text-left cursor-pointer shrink-0"
               aria-label="AssanMart home"
             >
@@ -228,10 +226,12 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center gap-2 ml-auto lg:ml-0 shrink-0">
             {isLanding && (
               <button
-                onClick={() => go('dashboard')}
-                className="hidden sm:flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#e0f4e7] hover:bg-[#b3e4c4] text-[#2a6b43] font-bold text-xs cursor-pointer active:scale-95 transition-colors"
+                onClick={onOpenImageScanner}
+                className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-[#1daa61] to-[#3fc27b] hover:from-[#148a4c] hover:to-[#1daa61] text-white font-bold text-xs shadow-md shadow-[#1daa61]/20 cursor-pointer active:scale-95 transition-all"
+                title="Upload photo of your handwritten grocery list"
+                aria-label="Upload grocery photo"
               >
-                Browse Store
+                <Camera className="w-4 h-4" /> Upload Image
               </button>
             )}
             <button
@@ -256,17 +256,12 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
 
             <button
-              type="button"
               onClick={onOpenFavorites}
               className="relative p-2 rounded-full bg-white border border-[#e0f4e7] text-rose-500 hover:bg-rose-50 transition-all cursor-pointer active:scale-95"
               aria-label="My favourites"
               title="My favourites"
             >
-              <Heart
-                size={17}
-                className={favoritesCount > 0 ? 'fill-rose-500' : ''}
-              />
-
+              <Heart className={`w-4 h-4 ${favoritesCount > 0 ? 'fill-rose-500' : ''}`} />
               {favoritesCount > 0 && (
                 <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white font-black text-[10px] min-w-4 h-4 rounded-full flex items-center justify-center px-1 border border-white">
                   {favoritesCount}
@@ -276,7 +271,6 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               ref={cartBtnRef}
-              type="button"
               onClick={onOpenCart}
               className="cart-btn group relative h-10 pl-3 pr-3 sm:pr-4 rounded-full bg-gradient-to-br from-[#1DAA61] to-[#3fc27b] text-white flex items-center gap-2 font-bold text-[13px] ring-2 ring-white shadow-lg shadow-[#1DAA61]/30 hover:shadow-xl hover:shadow-[#1DAA61]/40 hover:-translate-y-0.5 active:scale-95 transition-all duration-200 cursor-pointer overflow-visible"
               aria-label={`View cart${cartCount ? `, ${cartCount} items` : ''}`}
@@ -354,12 +348,13 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
       </div>
+
     </header>
 
     {/* phones & tablets: the search bar takes the whole line (voice and camera sit inside it), the page links are below */}
     <div className="lg:hidden bg-white border-b border-[#e0f4e7] px-3 sm:px-6 pt-2.5 pb-2 space-y-1.5">
       {!isLanding && <div className="w-full">{searchBox(true)}</div>}
-      <nav className="grid grid-cols-3 gap-1">
+      <nav className={`grid gap-1 ${nav.length ? "" : "hidden"}`} style={{ gridTemplateColumns: `repeat(${Math.max(1, nav.length)}, minmax(0, 1fr))` }}>
         {nav.map((n) => (
           <button
             key={n.key}

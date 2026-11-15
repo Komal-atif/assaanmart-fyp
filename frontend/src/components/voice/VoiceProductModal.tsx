@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { X, ChevronRight, SkipForward, Mic, Volume2 } from 'lucide-react';
+import { X, ChevronRight, Mic, Volume2, Minus, Plus, Check } from 'lucide-react';
 
 /* The selection pop-up: brands, types, sizes and quantity are chosen here (tap), or just by speaking.
    It opens by itself whenever the agent offers choices and closes when the choice is made. */
@@ -14,17 +14,18 @@ const money = (n?: number, t?: string) => (t ? t : typeof n === 'number' ? `Rs. 
 
 export const VoiceProductModal: React.FC<Props> = ({ options, phase, onSelect }) => {
   const [hidden, setHidden] = useState(false);
+  const [qty, setQty] = useState(1);
   const items: any[] = useMemo(() => options?.items ?? [], [options]);
   const isQty = options?.stage === 'quantity';
+  const namesOnly = options?.stage === 'brand' || (items.length > 0 && !items.some((i: any) => i.image_url));
   const key = useMemo(() => JSON.stringify([options?.stage, options?.title, items.map((i) => i.value)]), [options, items]);
 
   // a new set of choices always opens the pop-up again
-  useEffect(() => setHidden(false), [key]);
+  useEffect(() => { setHidden(false); setQty(Math.max(1, Math.round(options?.suggested_qty ?? 1))); }, [key]);
 
   const show = !!options && (items.length > 0 || isQty) && !hidden;
   if (!show) return null;
 
-  const suggested = options?.suggested_qty ?? 1;
   const product = options?.product;
 
   return (
@@ -48,37 +49,63 @@ export const VoiceProductModal: React.FC<Props> = ({ options, phase, onSelect })
 
         <div className="overflow-y-auto px-5 pb-5">
           {isQty ? (
-            <div className="flex flex-col items-center gap-4 py-2">
-              {product && (
-                <div className="flex items-center gap-3 w-full max-w-md rounded-2xl bg-white border border-[#b3e4c4] p-3">
-                  <div className="w-20 h-20 rounded-xl bg-[#f3fbf6] flex items-center justify-center overflow-hidden shrink-0">
-                    {product.image_url ? <img src={product.image_url} alt="" className="max-h-full max-w-full object-contain mix-blend-multiply" /> : <span className="text-3xl">🛒</span>}
+            <div className="flex flex-col items-center gap-4 py-3">
+              {/* the product whose quantity is asked */}
+              {options?.product && (
+                <div className="flex items-center gap-4 w-full max-w-md rounded-2xl bg-white border border-[#b3e4c4] p-3">
+                  <div className="w-24 h-24 shrink-0 rounded-xl bg-[#f3fbf6] flex items-center justify-center overflow-hidden">
+                    {options.product.image_url ? (
+                      <img src={options.product.image_url} alt="" className="max-h-full max-w-full object-contain mix-blend-multiply" />
+                    ) : (
+                      <span className="text-4xl">🛒</span>
+                    )}
                   </div>
                   <div className="min-w-0 text-left">
-                    <p className="font-extrabold text-[#1f5233] leading-tight line-clamp-2" dir="auto">{product.label || product.name}</p>
-                    <p className="text-sm text-[#4d7a5c] mt-1">{[product.size, money(product.price ?? product.unit_price, product.price_text)].filter(Boolean).join(' · ')}</p>
+                    <p className="font-extrabold text-[#1f5233] leading-tight line-clamp-2" dir="auto">{options.product.label || options.product.name}</p>
+                    <p className="text-sm text-[#4d7a5c] mt-1">
+                      {[options.product.size, money(options.product.price ?? options.product.unit_price, options.product.price_text)].filter(Boolean).join(' · ')}
+                    </p>
                   </div>
                 </div>
               )}
-              <button
-                onClick={() => onSelect('', suggested)}
-                className="px-6 py-3 rounded-full bg-[#1DAA61] hover:bg-[#148a4c] text-white font-extrabold flex items-center gap-2 shadow-lg active:scale-95 transition cursor-pointer"
-              >
-                Keep {suggested} &amp; go to next item <SkipForward className="w-4 h-4" />
-              </button>
-              <div className="flex flex-wrap justify-center gap-2">
-                {(items.length ? items : [1, 2, 3, 4, 5, 6].map((n) => ({ label: String(n), value: '', qty: n }))).map((it: any, i: number) => (
-                  <button
-                    key={`${it.value}-${i}`}
-                    onClick={() => onSelect(it.value, it.qty ?? null)}
-                    className="min-w-12 px-4 py-2 rounded-full bg-white border border-[#b3e4c4] text-sm font-extrabold text-[#2a6b43] hover:bg-[#1DAA61] hover:text-white hover:border-[#1DAA61] transition-colors cursor-pointer"
-                  >
-                    {it.label}
-                  </button>
-                ))}
+              {/* - 1 +  stepper */}
+              <div className="inline-flex items-center rounded-full bg-white border border-[#b3e4c4] shadow-sm">
+                <button onClick={() => setQty((q) => Math.max(1, q - 1))} aria-label="Less" className="w-12 h-12 rounded-full text-[#2a6b43] hover:bg-[#e0f4e7] flex items-center justify-center active:scale-90 transition cursor-pointer">
+                  <Minus className="w-5 h-5" />
+                </button>
+                <span className="w-14 text-center text-2xl font-black text-[#1f5233] tabular-nums">{qty}</span>
+                <button onClick={() => setQty((q) => Math.min(99, q + 1))} aria-label="More" className="w-12 h-12 rounded-full text-[#2a6b43] hover:bg-[#e0f4e7] flex items-center justify-center active:scale-90 transition cursor-pointer">
+                  <Plus className="w-5 h-5" />
+                </button>
               </div>
+              <button
+                onClick={() => onSelect('', qty)}
+                className="px-7 py-3 rounded-full bg-[#1DAA61] hover:bg-[#148a4c] text-white font-extrabold flex items-center gap-2 shadow-lg active:scale-95 transition cursor-pointer"
+              >
+                <Check className="w-4 h-4" /> Add {qty} to cart
+              </button>
             </div>
           ) : (
+            namesOnly ? (
+              <div className="flex flex-wrap gap-2.5">
+                {items.map((it: any, i: number) => (
+                  <button
+                    key={`${it.value}-${i}`}
+                    onClick={() => onSelect(it.value)}
+                    style={{ animationDelay: `${i * 40}ms` }}
+                    className="vpm-card px-5 py-3 rounded-2xl bg-white border border-[#b3e4c4] hover:border-[#1DAA61] hover:bg-[#1DAA61] hover:text-white hover:-translate-y-0.5 hover:shadow-lg text-[15px] font-extrabold text-[#1f5233] transition-all cursor-pointer"
+                    dir="auto"
+                  >
+                    {it.label || it.name}
+                  </button>
+                ))}
+                {options?.next_value && (
+                  <button onClick={() => onSelect(options.next_value)} className="px-5 py-3 rounded-2xl border-2 border-dashed border-[#96d9ae] text-[#2a6b43] text-sm font-bold flex items-center gap-1 hover:bg-white cursor-pointer">
+                    More <ChevronRight className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
               {items.map((it: any, i: number) => (
                 <button
@@ -107,6 +134,7 @@ export const VoiceProductModal: React.FC<Props> = ({ options, phase, onSelect })
                 </button>
               )}
             </div>
+            )
           )}
         </div>
       </div>

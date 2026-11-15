@@ -116,6 +116,9 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       a.play().catch(done);
     });
 
+  const lastAudioRef = useRef<string | null>(null);   // the agent's last sentence, repeated when the customer is silent
+  const idleCountRef = useRef(0);
+
   const stopSpeech = () => {
     playerRef.current?.pause();
     if (resolverRef.current) {
@@ -129,6 +132,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     const my = ++tokenRef.current;
     bargedRef.current = false;
     if (path) {
+      lastAudioRef.current = path;
       setPhase('thinking');   // the sound is being fetched: not "speaking" yet
       await playOnce(path, () => {
         if (my !== tokenRef.current) return;
@@ -198,7 +202,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const applyCart = (c: VoiceCart | undefined, reply?: string) => {
     if (!c) return;
     // basket emptied by the agent (not a cancel) = the backend placed the order
-    if (c.count === 0 && cartRef.current.count > 0 && !/cancel|منسوخ/i.test(reply || '')) {
+    // (only when the reply really says so: a lost / restarted session also shows an empty basket and must not close the window)
+    if (c.count === 0 && cartRef.current.count > 0 && /confirm|placed|order|کنفرم|آرڈر/i.test(reply || '') && !/cancel|منسوخ|haven't|not placed/i.test(reply || '')) {
       setOrderMessage(`Order placed — ${Math.round(cartRef.current.total)} rupees, cash on delivery.`);
       orderPlacedRef.current = true;
     }
@@ -219,6 +224,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
   // ---- voice loop -----------------------------------------------------------
   const handleUtterance = async (blob: Blob) => {
+    idleCountRef.current = 0;
     setPhase('thinking');
     setNotice('');
     try {
@@ -252,6 +258,17 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       bargedRef.current = true;
       stopSpeech();
     },
+    // 30 s of silence: repeat the question (twice at most), then just keep listening quietly
+    onIdle: () => {
+      if (!activeRef.current) return;
+      if (idleCountRef.current < 2 && lastAudioRef.current) {
+        idleCountRef.current += 1;
+        speak(lastAudioRef.current);
+      } else {
+        setPhase('listening');
+        voice.listen();
+      }
+    },
   });
 
   const shutDown = () => {
@@ -283,7 +300,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     setNotice('');
     setStarted(true);
     setPhase('thinking');
-    syncedIdsRef.current = []; // a new voice session adds on top of whatever is already in the store cart
     cartRef.current = EMPTY_VOICE_CART;
     setOrderMessage('');
     orderPlacedRef.current = false;
@@ -295,6 +311,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       setHeard('');
       setLang((g as any).language ?? null);
       setOptions(g.options ?? null);
+      syncedIdsRef.current = []; // a new voice session starts empty and adds on top of whatever is already in the store cart
       applyCart(g.cart);
       cartRef.current = g.cart || EMPTY_VOICE_CART;
       setCart(cartRef.current);
@@ -368,14 +385,13 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const live = phase === 'listening' || phase === 'speaking' || phase === 'thinking';
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
-      {/* the window is exactly as tall as the screen (minus a small margin); only its content area may scroll on phones */}
+    <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-6 overflow-y-auto animate-in fade-in duration-200">
       <div
-        className="relative w-full max-w-5xl h-[calc(100dvh-1rem)] sm:h-[calc(100dvh-2rem)] bg-white rounded-3xl shadow-2xl border border-[#e0f4e7] overflow-hidden flex flex-col"
+        className="relative w-full max-w-5xl max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-3rem)] flex flex-col bg-white rounded-3xl shadow-2xl border border-[#e0f4e7] my-auto overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* title bar */}
-        <div className="shrink-0 flex items-center justify-between gap-3 px-4 sm:px-6 py-2.5 border-b border-[#e0f4e7] bg-gradient-to-r from-[#f3fbf6] to-white">
+        <div className="shrink-0 flex items-center justify-between gap-3 px-4 sm:px-6 py-3 border-b border-[#e0f4e7] bg-gradient-to-r from-[#f3fbf6] to-white">
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="w-9 h-9 rounded-xl bg-white border border-[#e0f4e7] p-1 flex items-center justify-center shrink-0">
               <AnimatedLogo className="w-full h-full" />
@@ -401,38 +417,35 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           </button>
         </div>
 
-        {/* content: fills the rest of the screen height; the robot scales to fit */}
-        <div className="flex-1 min-h-0 overflow-y-auto lg:overflow-hidden p-3 sm:p-4">
-          <div className="grid grid-cols-1 lg:grid-cols-12 lg:grid-rows-[minmax(0,1fr)] gap-3 sm:gap-4 items-stretch lg:h-full">
-            <div className="lg:col-span-7 lg:min-h-0">
-              <VoiceStage
-                phase={phase}
-                started={started}
-                reply={reply}
-                heard={heard}
-                lang={lang}
-                notice={notice}
-                options={options}
-                cart={cart}
-                levelRef={voice.levelRef}
-                onPick={handlePickOption}
-                interrupt={interrupt}
-                onInterruptChange={setInterrupt}
-                onRetry={handleStartOver}
-              />
-            </div>
-            <div className="lg:col-span-5 lg:min-h-0 lg:overflow-y-auto">
-              <VoiceBasketPanel
-                cart={cart}
-                busy={busy}
-                message={orderMessage}
-                onDismissMessage={() => setOrderMessage('')}
-                onQty={handleQtyChange}
-                onConfirm={() => runAction('confirm')}
-                onDecline={() => runAction('decline')}
-                onSyncToMainCart={() => syncStoreCart(cart)}
-              />
-            </div>
+        <div className="p-3 sm:p-5 grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5 items-start overflow-y-auto min-h-0 flex-1">
+          <div className="lg:col-span-7">
+            <VoiceStage
+              phase={phase}
+              started={started}
+              reply={reply}
+              heard={heard}
+              lang={lang}
+              notice={notice}
+              options={options}
+              cart={cart}
+              levelRef={voice.levelRef}
+              onPick={handlePickOption}
+              interrupt={interrupt}
+              onInterruptChange={setInterrupt}
+              onRetry={handleStartOver}
+            />
+          </div>
+          <div className="lg:col-span-5">
+            <VoiceBasketPanel
+              cart={cart}
+              busy={busy}
+              message={orderMessage}
+              onDismissMessage={() => setOrderMessage('')}
+              onQty={handleQtyChange}
+              onConfirm={() => runAction('confirm')}
+              onDecline={() => runAction('decline')}
+              onSyncToMainCart={() => syncStoreCart(cart)}
+            />
           </div>
         </div>
       </div>
