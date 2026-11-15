@@ -261,7 +261,6 @@ export const Header: React.FC<HeaderProps> = ({
               className="relative p-2 rounded-full bg-white border border-[#e0f4e7] text-rose-500 hover:bg-rose-50 transition-all cursor-pointer active:scale-95"
               aria-label="My favourites"
               title="My favourites"
-              className="relative rounded-full border border-[#f0dfe3] p-2.5 text-rose-500 transition-all hover:bg-rose-50"
             >
               <Heart
                 size={17}
@@ -354,130 +353,7 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </div>
         </div>
-
-        {/* Mobile Dashboard Search */}
-        {currentView === 'dashboard' && (
-          <div ref={searchContainerRef} className="relative pb-3 md:hidden">
-            <div className="relative flex items-center">
-              <Search className="absolute left-4 h-4 w-4 text-[#55936b]" />
-              <input
-                type="text"
-                placeholder="Search your groceries..."
-                value={searchTerm}
-                onChange={(event) => {
-                  onSearchChange(event.target.value);
-                  setShowSearchSuggestions(true);
-                }}
-                onFocus={() => setShowSearchSuggestions(true)}
-                className="w-full rounded-full border border-[#dcebe0] bg-[#f5faf6] py-2.5 pl-11 pr-10 text-sm text-[#254b36] outline-none focus:border-[#80b995] focus:bg-white"
-              />
-              {searchTerm && (
-                <button
-                  type="button"
-                  onClick={() => onSearchChange('')}
-                  className="absolute right-4 text-[#91a698]"
-                  aria-label="Clear search"
-                >
-                  <X size={15} />
-                </button>
-              )}
-            </div>
-
-            {showSearchSuggestions && suggestions.length > 0 && (
-              <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-2xl border border-[#e2eee5] bg-white shadow-xl">
-                {suggestions.map((product) => (
-                  <button
-                    key={product.id}
-                    type="button"
-                    onClick={() => {
-                      onSelectProduct(product);
-                      setShowSearchSuggestions(false);
-                    }}
-                    className="flex w-full items-center justify-between gap-3 border-b border-[#f0f5f1] px-4 py-3 text-left hover:bg-[#f5faf6]"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-[#304c3a]">
-                        {product.name}
-                      </p>
-                      <p className="text-xs text-[#829889]">
-                        {product.category} · {product.size}
-                      </p>
-                    </div>
-                    <span className="whitespace-nowrap text-sm font-bold text-[#398052]">
-                      {product.price != null ? `PKR ${product.price}` : 'Available'}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Mobile Landing Menu */}
-        {currentView === 'landing' && (
-          <div
-            className={`grid transition-all duration-300 ease-in-out lg:hidden ${
-              isMenuOpen
-                ? 'grid-rows-[1fr] opacity-100'
-                : 'grid-rows-[0fr] opacity-0'
-            }`}
-          >
-            <div className="overflow-hidden">
-              <nav className="border-t border-[#edf2ee] py-3">
-                {navItems.map((item) => {
-                  const Icon = item.icon;
-
-                  return (
-                    <button
-                      key={item.section}
-                      type="button"
-                      onClick={() => navigateSection(item.section)}
-                      className="flex w-full items-center justify-between rounded-xl px-3 py-3 text-left text-sm font-semibold text-[#45634f] transition-colors hover:bg-[#f1f8f2] hover:text-[#26764a]"
-                    >
-                      <span className="flex items-center gap-3">
-                        <Icon size={17} className="text-[#5b9a6d]" />
-                        {item.label}
-                      </span>
-                      <ChevronRight size={16} className="text-[#9ab3a0]" />
-                    </button>
-                  );
-                })}
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsMenuOpen(false);
-                    onNavigateView('dashboard');
-                  }}
-                  className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#26764a] px-4 py-3 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#1b603b]"
-                >
-                  <Store size={17} />
-                  Explore Grocery Store
-                </button>
-
-                {user && (
-                  <div className="mt-3 flex items-center justify-between border-t border-[#edf2ee] px-3 pt-3 sm:hidden">
-                    <span className="max-w-[160px] truncate text-xs font-semibold text-[#45634f]">
-                      Signed in as {user.name}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsMenuOpen(false);
-                        onLogout();
-                      }}
-                      className="text-xs font-bold text-rose-500"
-                    >
-                      Logout
-                    </button>
-                  </div>
-                )}
-              </nav>
-            </div>
-          </div>
-        )}
       </div>
-
     </header>
 
     {/* phones & tablets: the search bar takes the whole line (voice and camera sit inside it), the page links are below */}

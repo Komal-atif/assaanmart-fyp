@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { ProductCard } from './ProductCard';
 import { Product, Category } from '../types';
@@ -233,19 +232,18 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
 
       <div className="max-w-[1360px] mx-auto px-3 sm:px-6 pt-5 space-y-7">
         
-        {/* Promotional Showcase Hero Banner - Requested 3D AssanMart Brand Banner */}
         {/* Promotional Showcase Hero Banner */}
-<div
-  onClick={() => onOpenVoice?.()}
-  className="relative w-full overflow-hidden rounded-2xl sm:rounded-3xl border border-[#e0f4e7] shadow-md hover:shadow-lg bg-white cursor-pointer group transition-all p-0"
-  title="Click to start voice grocery order"
->
-  <img
-    src="/banner.jpeg"
-    alt="AssanMart - Your Voice. Your Groceries"
-    className="block w-full h-auto sm:h-[260px] lg:h-[390px] object-cover object-center"
-  />
-</div>
+        <div
+          onClick={() => onOpenVoice?.()}
+          className="relative w-full overflow-hidden rounded-2xl sm:rounded-3xl border border-[#e0f4e7] shadow-md hover:shadow-lg bg-white cursor-pointer group transition-all p-0"
+          title="Click to start voice grocery order"
+        >
+          <img
+            src="/banner.jpeg"
+            alt="AssanMart - Your Voice. Your Groceries"
+            className="block w-full h-auto sm:h-[260px] lg:h-[390px] object-cover object-center"
+          />
+        </div>
 
         {/* Category Circles Row (Categories shown as circles with names underneath) */}
         <div className="bg-white/90 backdrop-blur-xs rounded-2xl sm:rounded-3xl p-3 sm:p-6 shadow-xs border border-[#e0f4e7]">
@@ -455,7 +453,6 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
                 {displayedProducts.map((p) => (
                   <ProductCard
                     key={p.id}
@@ -515,7 +512,6 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
                 ))}
               </div>
             </div>
-
 
           </div>
         )}
