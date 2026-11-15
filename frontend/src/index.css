@@ -3,24 +3,24 @@
 @layer base {
   :root {
     --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --mint: #d1fae5;
-    --mint-soft: #f0fdf4;
-    --mint-border: #a7f3d0;
+    --mint: #e0f4e7;
+    --mint-soft: #f3fbf6;
+    --mint-border: #b3e4c4;
     --skin: #f7f2ea;           /* soft skin/sand accent */
     --skin-card: #fbf8f2;
     --skin-warm: #f6efe3;
     --card: #ffffff;
-    --ink: #064e3b;           /* deep professional forest emerald */
-    --ink-dark: #022c22;
-    --ink-muted: #4b6b60;
-    --btn: #064e3b;           /* dark green brand button */
-    --btn-hover: #065f46;
-    --accent: #10b981;
-    --add: #064e3b;           /* dark green add button */
-    --add-hover: #065f46;
+    --ink: #2a6b43;           /* deep professional forest emerald */
+    --ink-dark: #1f5233;
+    --ink-muted: #4d7a5c;
+    --btn: #1daa61;           /* dark green brand button */
+    --btn-hover: #148a4c;
+    --accent: #7fcf9a;
+    --add: #1daa61;           /* dark green add button */
+    --add-hover: #148a4c;
     --add-ink: #ffffff;
-    --bar: #f0fdf4;
-    --line: #e2ede6;
+    --bar: #f3fbf6;
+    --line: #e0f4e7;
     --ease: cubic-bezier(0.16, 1, 0.3, 1);
     --bounce: cubic-bezier(0.34, 1.45, 0.5, 1);
   }
@@ -63,7 +63,7 @@
     #ffffff 0%,
     #faf8f5 20%,
     #ffffff 40%,
-    #f2faf5 60%,
+    #f3fbf6 60%,
     #ffffff 80%,
     #fbf9f5 100%
   );
@@ -169,7 +169,7 @@
 }
 
 .bg-assan-circle {
-  background: radial-gradient(circle at 35% 30%, #ffffff 0%, #faf8f5 55%, #f2f9f5 100%);
+  background: radial-gradient(circle at 35% 30%, #ffffff 0%, #faf8f5 55%, #f2f9f4 100%);
 }
 
 /* ------------------------------------------------------------------ */
@@ -236,19 +236,19 @@
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  background: #064e3b;
+  background: #1daa61;
   color: #ffffff;
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  box-shadow: 0 4px 14px rgba(6, 78, 59, 0.32);
+  box-shadow: 0 4px 14px rgba(29,170,97, 0.32);
 }
 
 .mic-orb i {
   position: absolute;
   inset: -3px;
   border-radius: 50%;
-  border: 2px solid #10b981;
+  border: 2px solid #7fcf9a;
   opacity: 0;
   pointer-events: none;
 }
@@ -301,15 +301,15 @@
   height: 100%;
   padding: 14px 12px 14px;
   background: #ffffff;
-  border: 1px solid #e2ede6;
+  border: 1px solid #e0f4e7;
   border-radius: 18px;
-  box-shadow: 0 2px 8px rgba(6, 78, 59, 0.03);
+  box-shadow: 0 2px 8px rgba(29,170,97, 0.03);
   transition: transform 0.25s var(--ease), box-shadow 0.25s ease, border-color 0.25s ease;
 }
 .db-gcard:hover {
   transform: translateY(-4px);
-  box-shadow: 0 12px 28px rgba(6, 78, 59, 0.08);
-  border-color: #064e3b;
+  box-shadow: 0 12px 28px rgba(29,170,97, 0.08);
+  border-color: #1daa61;
 }
 
 .db-gimg {
@@ -325,6 +325,7 @@
   overflow: hidden;
 }
 .db-gimg img {
+  transform: var(--fit, none);
   position: absolute;
   inset: 0;
   width: 100%;
@@ -335,7 +336,7 @@
   transition: transform 0.35s var(--ease);
 }
 .db-gcard:hover .db-gimg img {
-  transform: scale(1.04);
+  transform: var(--fit, none) scale(1.04);
 }
 
 .db-gcard h3 {
@@ -346,7 +347,7 @@
   width: 100%;
   min-height: 2.5em;
   margin: 10px 0 2px;
-  color: #064e3b;
+  color: #2a6b43;
   font-size: 13px;
   font-weight: 700;
   line-height: 1.35;
@@ -354,7 +355,7 @@
   transition: color 0.15s ease;
 }
 .db-gcard:hover h3 {
-  color: #047857;
+  color: #0f6e3d;
 }
 
 .db-gsize {
@@ -371,7 +372,7 @@
   margin: 6px 0 10px;
 }
 .db-gprice {
-  color: #064e3b;
+  color: #2a6b43;
   font-size: 18px;
   font-weight: 800;
   letter-spacing: -0.01em;
@@ -384,7 +385,7 @@
   font-weight: 700;
   letter-spacing: 0;
   vertical-align: 0.75em;
-  color: #047857;
+  color: #0f6e3d;
 }
 .db-gna {
   color: #6d8e82;
@@ -429,20 +430,20 @@
   padding: 0 12px;
   border: 0;
   border-radius: 12px;
-  background: #064e3b;
+  background: #1daa61;
   color: #ffffff;
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(6, 78, 59, 0.2);
+  box-shadow: 0 2px 6px rgba(29,170,97, 0.2);
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .db-gadd svg {
   transition: transform 0.25s var(--bounce);
 }
 .db-gadd:hover:not(:disabled) {
-  background: #065f46;
-  box-shadow: 0 4px 12px rgba(6, 78, 59, 0.3);
+  background: #148a4c;
+  box-shadow: 0 4px 12px rgba(29,170,97, 0.3);
   transform: translateY(-1px);
 }
 .db-gadd:hover:not(:disabled) svg {
@@ -468,9 +469,9 @@
   height: 38px;
   padding: 0 8px;
   border-radius: 12px;
-  background: #064e3b;
+  background: #1daa61;
   color: #ffffff;
-  box-shadow: 0 3px 10px rgba(6, 78, 59, 0.25);
+  box-shadow: 0 3px 10px rgba(29,170,97, 0.25);
   animation: stepperExpand 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 .db-gqty button {
@@ -488,7 +489,7 @@
 }
 .db-gqty button:hover {
   background: #ffffff;
-  color: #064e3b;
+  color: #2a6b43;
   transform: scale(1.08);
 }
 .db-gqty button:active {
@@ -532,10 +533,10 @@
   width: 100%;
   height: 100%;
   background: #ffffff;
-  border: 2px solid #064e3b;
+  border: 2px solid #1daa61;
   border-radius: 9999px;
   padding: 3px;
-  box-shadow: 0 10px 25px -4px rgba(6, 78, 59, 0.4), 0 0 14px rgba(16, 185, 129, 0.3);
+  box-shadow: 0 10px 25px -4px rgba(29,170,97, 0.4), 0 0 14px rgba(127,207,154, 0.3);
   animation: gFlyScale 0.72s cubic-bezier(0.2, 0.85, 0.3, 1) forwards;
 }
 .db-gfly-inner img {
@@ -593,3 +594,84 @@
 .animate-blink {
   animation: blinkCaret 0.85s steps(1) infinite;
 }
+/* ------------------------------------------------------------------ */
+/* Add to Cart button: shine on hover, icon spin, stepper pop           */
+/* ------------------------------------------------------------------ */
+.add-btn .add-shine {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, 0.38) 50%, transparent 70%);
+  transform: translateX(-130%);
+  pointer-events: none;
+}
+.add-btn:hover .add-shine,
+.add-btn:focus-visible .add-shine {
+  animation: addShine 0.9s ease;
+}
+.add-btn .add-ico {
+  transition: transform 0.35s var(--bounce), background 0.2s ease;
+}
+.add-btn:hover .add-ico {
+  transform: rotate(180deg) scale(1.1);
+  background: rgba(255, 255, 255, 0.4);
+}
+@keyframes addShine {
+  to { transform: translateX(130%); }
+}
+.add-stepper {
+  animation: addStepperPop 0.35s var(--bounce) both;
+}
+.add-num {
+  animation: numPop 0.2s var(--bounce);
+}
+@keyframes addStepperPop {
+  0%   { transform: scale(0.8); opacity: 0.4; }
+  60%  { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@media (hover: none) {
+  /* phones have no hover: give the button a calm pulse instead */
+  .add-btn .add-shine { animation: addShine 3.2s ease-in-out 1.2s infinite; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Phones                                                               */
+/* ------------------------------------------------------------------ */
+html { -webkit-text-size-adjust: 100%; }
+img, video { max-width: 100%; }
+@media (max-width: 640px) {
+  /* 16px fields: iPhones do not zoom the page when a field is tapped */
+  input, select, textarea { font-size: 16px !important; }
+  .db-gcard { padding: 10px 9px 11px; border-radius: 16px; }
+  .db-gprice { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .add-btn .add-shine, .add-stepper, .add-num { animation: none !important; }
+}
+
+/* the product picture used as a big panel (product detail window) instead of a square card box */
+.db-gimg.fill {
+  aspect-ratio: auto;
+  background: transparent;
+  border-radius: 0;
+  cursor: default;
+}
+
+/* ---- cart button: gentle wiggle on hover, pop when the count changes ---- */
+.cart-btn:hover .cart-ico { animation: cartWiggle .6s ease-in-out; }
+@keyframes cartWiggle {
+  0%, 100% { transform: rotate(0) }
+  25% { transform: rotate(-14deg) translateX(-1px) }
+  60% { transform: rotate(10deg) translateX(1px) }
+}
+.cart-badge { animation: cartBadgePop .35s cubic-bezier(.34,1.56,.64,1); }
+@keyframes cartBadgePop { from { transform: scale(.3) } to { transform: scale(1) } }
+@media (prefers-reduced-motion: reduce) {
+  .cart-btn:hover .cart-ico, .cart-badge { animation: none }
+}
+
+/* ---- phones: the page must never slide left / right ---- */
+html, body, #root { max-width: 100%; overflow-x: hidden; overflow-x: clip; overscroll-behavior-x: none; }
+.dashboard-page { max-width: 100vw; overflow-x: clip; }
+img, svg, video, canvas { max-width: 100%; }
+.sort-select{font-size:13px!important}

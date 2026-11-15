@@ -24,6 +24,7 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
   const [phase, setPhase] = useState<Phase>('idle');
   const [needTap, setNeedTap] = useState(false);
   const [notice, setNotice] = useState('');
+  const [heard, setHeard] = useState('');
 
   const playerRef = useRef<HTMLAudioElement | null>(null);
   const resolverRef = useRef<(() => void) | null>(null);
@@ -46,6 +47,7 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
         resolve(ok);
       };
       resolverRef.current = () => finish(true);
+      a.onplaying = () => setPhase('speaking');
       a.onended = () => finish(true);
       a.onerror = () => finish(true);
       a.src = url.startsWith('http') ? url : `${getBackendUrl()}${url}`;
@@ -79,7 +81,7 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
   const speakThenListen = async (url: string, listen = true) => {
     const my = ++tokenRef.current;
     voice.pause();
-    setPhase('speaking');
+    setPhase('thinking'); // 'speaking' is shown only when the sound really starts
     const ok = await play(url);
     if (!ok) {
       setPhase('idle');
@@ -98,6 +100,7 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
     setStage(st);
     setOpen(true);
     setNotice('');
+    setHeard('');
     setPhase('thinking');
     try {
       const d = await welcomeSay(st, lang);
@@ -142,6 +145,7 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
       const d = await welcomeReply(blob, stageRef.current, langRef.current);
       if (!activeRef.current) return;
       if (!d.heard) return listenNow();
+      setHeard(d.heard);
       if (d.action === 'language') {
         langRef.current = d.lang;
         propsRef.current.onLanguage(d.lang);
@@ -217,57 +221,86 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
     }
   }, [voiceOpen]);
 
-  // keep the bottom of the page free so the card never covers the page's own buttons
-  useEffect(() => {
-    const show = open && !voiceOpen;
-    const prev = document.body.style.paddingBottom;
-    if (show) document.body.style.paddingBottom = '9rem';
-    return () => {
-      document.body.style.paddingBottom = prev;
-    };
-  }, [open, voiceOpen]);
+  // language chosen with a button: carry on with the next question in that language
+  const pickLanguage = (l: Lang) => {
+    release();
+    langRef.current = l;
+    propsRef.current.onLanguage(l);
+    say('mode', l);
+  };
 
   if (!open || voiceOpen) return null;
 
 
-  return (
-    <div ref={cardRef} className="fixed bottom-3 left-1/2 -translate-x-1/2 z-40 w-[min(36rem,calc(100vw-1.5rem))] rounded-3xl border border-white/70 bg-white/65 backdrop-blur-xl shadow-[0_10px_40px_rgba(5,150,105,0.22)] ring-1 ring-emerald-500/10 px-4 py-3 animate-in fade-in slide-in-from-bottom-3 duration-500">
-      <div className="flex items-start gap-3">
-        <div
-          className={`shrink-0 w-11 h-11 rounded-full flex items-center justify-center text-white shadow-md ${
-            phase === 'listening'
-              ? 'bg-linear-to-br from-emerald-500 to-teal-600 animate-pulse ring-4 ring-emerald-400/30'
-              : phase === 'speaking'
-              ? 'bg-linear-to-br from-emerald-400 to-emerald-600 ring-4 ring-emerald-300/30'
-              : 'bg-slate-400/80'
-          }`}
-        >
-          {phase === 'speaking' ? <Volume2 className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">
-            AssanMart assistant
-            {phase === 'listening' && ' · listening…'}
-            {phase === 'thinking' && ' · …'}
-          </p>
-          <p className="text-sm font-medium text-slate-800 mt-0.5 leading-snug" dir="auto">
-            {text || 'Welcome to AssanMart!'}
-          </p>
-          {notice && <p className="text-xs text-amber-600 mt-1">{notice}</p>}
-        </div>
-        <button
-          onClick={() => {
-            release();
-            setOpen(false);
-          }}
-          className="shrink-0 w-7 h-7 rounded-full hover:bg-slate-100 text-slate-400 flex items-center justify-center cursor-pointer"
-          aria-label="Close"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
+  const speaking = phase === 'speaking';
+  const listening = phase === 'listening';
 
-      {needTap && <p className="mt-2 pl-14 text-[11px] font-semibold text-emerald-700">🔊 Tap anywhere on the page to hear the greeting</p>}
+  const status = listening ? 'Listening…' : speaking ? 'Speaking…' : phase === 'thinking' ? 'One moment…' : '';
+
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-[60] flex justify-center px-3 pb-3 sm:pb-5 pointer-events-none">
+      <div
+        ref={cardRef}
+        role="dialog"
+        aria-label="Welcome to AssanMart"
+        className="pointer-events-auto relative w-full max-w-2xl overflow-hidden rounded-3xl bg-white/70 backdrop-blur-xl border border-white/70 shadow-[0_20px_60px_-15px_rgba(15,110,61,.45)] animate-in slide-in-from-bottom-6 fade-in duration-500"
+      >
+        {/* title, what the agent says, status, close */}
+        <div className="flex items-start gap-3 px-4 sm:px-5 pt-4 pb-3">
+          <span className="mt-0.5 w-9 h-9 shrink-0 rounded-xl bg-[#e0f4e7] text-[#1DAA61] flex items-center justify-center">
+            {speaking ? <Volume2 className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base sm:text-lg font-black text-[#1f5233] leading-tight">Welcome to AssanMart</h2>
+            <p className="mt-0.5 text-[13px] sm:text-sm text-[#4d7a5c] leading-snug line-clamp-3" dir="auto">
+              {text || 'Would you like to order by voice or browse the store?'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {status && (
+              <span className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold text-white ${listening ? 'bg-[#1DAA61]' : speaking ? 'bg-[#f59e0b]' : 'bg-[#7fcf9a]'}`}>
+                {speaking ? <Volume2 className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />} {status}
+              </span>
+            )}
+            <button
+              onClick={() => {
+                release();
+                setOpen(false);
+              }}
+              className="w-8 h-8 rounded-full hover:bg-[#e0f4e7] text-[#4d7a5c] flex items-center justify-center cursor-pointer"
+              aria-label="Close"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* what the customer said */}
+        <div className="px-4 sm:px-5 py-2.5 border-t border-[#e0f4e7] bg-white/50 text-xs sm:text-[13px] text-[#4d7a5c] flex items-center justify-between gap-2" dir="auto">
+          <span className="min-w-0 truncate">
+            {heard ? <>You said: <span className="font-semibold text-[#2a6b43]">“{heard}”</span></> : listening ? 'Listening… say English or اردو' : 'Your words will appear here'}
+          </span>
+          {status && <span className="sm:hidden shrink-0 font-bold text-[#148a4c]">{status}</span>}
+        </div>
+
+        {(notice || needTap || stage === 'language') && (
+          <div className="px-4 sm:px-5 pb-3 pt-1 flex flex-wrap items-center gap-2">
+            {/* language choice, only while the agent is asking for it (voice works too) */}
+            {stage === 'language' && (
+              <>
+                <button onClick={() => pickLanguage('english')} className="px-5 py-1.5 rounded-full bg-white/80 hover:bg-white border border-[#b3e4c4] text-[#2a6b43] text-sm font-bold cursor-pointer active:scale-95 transition">
+                  English
+                </button>
+                <button onClick={() => pickLanguage('urdu')} className="px-5 py-1.5 rounded-full bg-white/80 hover:bg-white border border-[#b3e4c4] text-[#2a6b43] text-sm font-bold cursor-pointer active:scale-95 transition">
+                  اردو
+                </button>
+              </>
+            )}
+            {notice && <span className="text-[11px] text-amber-700">{notice}</span>}
+            {needTap && <span className="text-[11px] font-semibold text-[#148a4c]">🔊 Tap anywhere to hear the greeting</span>}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

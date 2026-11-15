@@ -341,7 +341,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         particleCount: 80,
         spread: 70,
         origin: { y: 0.6 },
-        colors: ['#10b981', '#059669', '#34d399', '#f59e0b'],
+        colors: ['#5bbd7e', '#46a468', '#96d9ae', '#f59e0b'],
       });
     } catch (err: any) {
       setSubmitError(
@@ -355,11 +355,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
+      <div className="relative w-full max-w-2xl bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[94dvh] sm:max-h-[92vh]">
         
         {/* Modal Header */}
-        <div className="p-5 px-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+        <div className="p-4 sm:p-5 sm:px-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
           <div>
             <h3 className="text-lg font-black text-slate-900">
               {completedOrder ? 'Order Confirmed 🎉' : 'Checkout & Confirm Order'}
@@ -379,11 +379,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         </div>
 
         {/* Modal Content */}
-        <div className="p-6 overflow-y-auto space-y-6">
+        <div className="p-4 sm:p-6 overflow-y-auto space-y-6">
           {completedOrder ? (
             /* Order Success State / Receipt */
             <div className="text-center space-y-6 py-4 animate-in zoom-in-95 duration-300">
-              <div className="w-20 h-20 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto shadow-inner">
+              <div className="w-20 h-20 rounded-full bg-[#e0f4e7] text-[#46a468] flex items-center justify-center mx-auto shadow-inner">
                 <CheckCircle className="w-10 h-10" />
               </div>
 
@@ -392,7 +392,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                   Shukriya, {completedOrder.customerName}!
                 </h4>
                 <p className="text-sm text-slate-600 mt-1 max-w-md mx-auto">
-                  Your order <strong className="text-emerald-700">#{completedOrder.id}</strong> has been received and confirmed. Our delivery rider will reach your address in {completedOrder.city}.
+                  Your order <strong className="text-[#378553]">#{completedOrder.id}</strong> has been received and confirmed. Our delivery rider will reach your address in {completedOrder.city}.
                 </p>
               </div>
 
@@ -414,7 +414,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 </div>
                 <div className="flex justify-between border-b border-slate-200 pb-2">
                   <span className="text-slate-500 font-semibold">Payment</span>
-                  <span className="font-semibold text-emerald-700">{completedOrder.paymentMethod}</span>
+                  <span className="font-semibold text-[#378553]">{completedOrder.paymentMethod}</span>
                 </div>
                 <div className="flex justify-between border-b border-slate-200 pb-2">
                   <span className="text-slate-500 font-semibold">Items ({completedOrder.items.length})</span>
@@ -425,14 +425,14 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 </div>
                 <div className="flex justify-between text-sm font-black text-slate-900 pt-1">
                   <span>Total Amount Paid / Payable</span>
-                  <span className="text-emerald-700 font-sans">PKR {completedOrder.total.toLocaleString()}</span>
+                  <span className="text-[#378553] font-sans">PKR {completedOrder.total.toLocaleString()}</span>
                 </div>
               </div>
 
               <div className="pt-2">
                 <button
                   onClick={onClose}
-                  className="px-8 py-3 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md shadow-emerald-600/30 transition-all cursor-pointer"
+                  className="px-8 py-3 rounded-full bg-[#46a468] hover:bg-[#378553] text-white font-bold text-sm shadow-md shadow-[#46a468]/30 transition-all cursor-pointer"
                 >
                   Continue Shopping
                 </button>
@@ -445,22 +445,22 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               {/* Delivery Details */}
               <div className="space-y-4">
                 <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <MapPin className="w-4 h-4 text-emerald-600" />
+                  <MapPin className="w-4 h-4 text-[#46a468]" />
                   Delivery Information
                 </h4>
 
-                <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
+                <div className="flex flex-col sm:flex-row items-start gap-2 sm:gap-3 rounded-2xl border border-[#b3e4c4] bg-[#f3fbf6]/70 p-3">
                   <button
                     type="button"
                     onClick={voiceOn ? stopVoice : startVoice}
                     className={`shrink-0 px-3 py-2 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer ${
-                      voiceOn ? 'bg-slate-200 text-slate-700' : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                      voiceOn ? 'bg-slate-200 text-slate-700' : 'bg-[#46a468] hover:bg-[#378553] text-white'
                     }`}
                   >
                     {voiceOn ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                     {voiceOn ? 'Voice off' : 'Voice on'}
                   </button>
-                  <p className="text-[11px] text-emerald-900 leading-snug pt-1" dir="auto">
+                  <p className="text-[11px] text-[#1f5233] leading-snug pt-1" dir="auto">
                     {voiceOn
                       ? `${vPhase === 'listening' ? '🎙 Listening… ' : vPhase === 'speaking' ? '🔊 ' : vPhase === 'thinking' ? '… ' : ''}${agentText}`
                       : 'Turn voice on and just tell me your delivery address, or use the location button.'}
@@ -480,7 +480,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                         placeholder="e.g. Komal Atif"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-emerald-500 focus:outline-hidden"
+                        className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-[#5bbd7e] focus:outline-hidden"
                       />
                     </div>
                   </div>
@@ -497,7 +497,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                         placeholder="0300-1234567"
                         value={phone}
                         onChange={(e) => setPhone(e.target.value)}
-                        className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-emerald-500 focus:outline-hidden"
+                        className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-[#5bbd7e] focus:outline-hidden"
                       />
                     </div>
                   </div>
@@ -508,7 +508,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     type="button"
                     onClick={useMyLocation}
                     disabled={locating}
-                    className="px-3 py-2 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-800 text-xs font-bold flex items-center gap-1.5 hover:bg-emerald-100 cursor-pointer disabled:opacity-60"
+                    className="px-3 py-2 rounded-full border border-[#96d9ae] bg-[#f3fbf6] text-[#2a6b43] text-xs font-bold flex items-center gap-1.5 hover:bg-[#e0f4e7] cursor-pointer disabled:opacity-60"
                   >
                     {locating ? <Loader2 className="w-4 h-4 animate-spin" /> : <LocateFixed className="w-4 h-4" />}
                     {locating ? 'Finding you…' : 'Use my current location'}
@@ -528,7 +528,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                       placeholder="e.g. Flat 4B, Al-Noor Heights, Gulshan"
                       value={address}
                       onChange={(e) => setAddress(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-emerald-500 focus:outline-hidden"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-[#5bbd7e] focus:outline-hidden"
                     />
                   </div>
 
@@ -539,7 +539,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                     <select
                       value={city}
                       onChange={(e) => setCity(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-emerald-500 focus:outline-hidden cursor-pointer"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-[#5bbd7e] focus:outline-hidden cursor-pointer"
                     >
                       {(CITIES.includes(city) ? CITIES : [city, ...CITIES]).map((c) => (
                         <option key={c} value={c}>
@@ -554,7 +554,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               {/* Delivery Timing Slot */}
               <div className="space-y-3 pt-2 border-t border-slate-100">
                 <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <Truck className="w-4 h-4 text-emerald-600" />
+                  <Truck className="w-4 h-4 text-[#46a468]" />
                   Select Delivery Slot
                 </h4>
 
@@ -570,7 +570,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                       onClick={() => setDeliverySlot(s.slot)}
                       className={`p-3 rounded-xl border text-left cursor-pointer transition-all ${
                         deliverySlot === s.slot
-                          ? 'border-emerald-500 bg-emerald-50/70 text-emerald-950 ring-2 ring-emerald-500/20'
+                          ? 'border-[#5bbd7e] bg-[#f3fbf6]/70 text-[#153a24] ring-2 ring-[#5bbd7e]/20'
                           : 'border-slate-200 hover:border-slate-300 bg-white text-slate-700'
                       }`}
                     >
@@ -584,12 +584,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
               {/* Payment Methods */}
               <div className="space-y-3 pt-2 border-t border-slate-100">
                 <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-emerald-600" />
+                  <CreditCard className="w-4 h-4 text-[#46a468]" />
                   Payment Method
                 </h4>
 
-                <div className="p-3 rounded-xl border border-emerald-500 bg-emerald-50/70 text-emerald-950 ring-2 ring-emerald-500/20 flex items-center gap-3">
-                  <Banknote className="w-6 h-6 text-emerald-700 shrink-0" />
+                <div className="p-3 rounded-xl border border-[#5bbd7e] bg-[#f3fbf6]/70 text-[#153a24] ring-2 ring-[#5bbd7e]/20 flex items-center gap-3">
+                  <Banknote className="w-6 h-6 text-[#378553] shrink-0" />
                   <div>
                     <p className="text-xs font-bold">Cash on Delivery</p>
                     <p className="text-[11px] text-slate-500">Pay cash at your doorstep</p>
@@ -606,12 +606,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 <div className="flex justify-between text-slate-600">
                   <span>Delivery Fee</span>
                   <span className="font-semibold text-slate-900">
-                    {deliveryFee === 0 ? <span className="text-emerald-700 font-bold">FREE</span> : `PKR ${deliveryFee}`}
+                    {deliveryFee === 0 ? <span className="text-[#378553] font-bold">FREE</span> : `PKR ${deliveryFee}`}
                   </span>
                 </div>
                 <div className="flex justify-between text-sm font-black text-slate-900 pt-2 border-t border-slate-200">
                   <span>Payable Amount</span>
-                  <span className="text-emerald-700 text-base font-sans">PKR {grandTotal.toLocaleString()}</span>
+                  <span className="text-[#378553] text-base font-sans">PKR {grandTotal.toLocaleString()}</span>
                 </div>
               </div>
 
@@ -623,7 +623,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full py-3.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm shadow-md shadow-emerald-600/30 transition-all cursor-pointer flex items-center justify-center gap-2"
+                  className="w-full py-3.5 rounded-full bg-[#46a468] hover:bg-[#378553] text-white font-extrabold text-sm shadow-md shadow-[#46a468]/30 transition-all cursor-pointer flex items-center justify-center gap-2"
                 >
                   {isSubmitting ? (
                     <span>Placing order...</span>

@@ -3,224 +3,306 @@ import { useRef, useCallback, useEffect } from 'react';
 export interface UseVoiceLoopOptions {
   onUtterance: (blob: Blob) => void;
   onBargeIn?: () => void;
-  silenceThresholdMs?: number; // how long the customer may stay silent (thinking) before the sentence is sent
+  silenceThresholdMs?: number; // quiet time (relative to the user's own voice) before the audio is sent (default 900ms)
+  maxUtteranceMs?: number;     // safety stop: send whatever was recorded after this long (default 30000ms): background voices can never keep the mic open forever
 }
 
-const SPEECH_THRESHOLD = 0.12;      // normal listening
-const BARGE_IN_MIN = 0.17;          // lowest level that can interrupt the agent while it talks
-const MIN_SPEECH_FRAMES = 14;       // ~0.25 s of real speech before a sentence counts (ignores clicks, fans, echo tails)
-const MIN_BLOB_BYTES = 2000;        // anything smaller is noise, never sent to the server
-
-interface Rec {
-  recorder: MediaRecorder;
-  chunks: Blob[];
-  send: boolean; // only true when the customer really finished a sentence
-}
-
-export function useVoiceLoop({ onUtterance, onBargeIn, silenceThresholdMs = 1800 }: UseVoiceLoopOptions) {
+export function useVoiceLoop({
+  onUtterance,
+  onBargeIn,
+  silenceThresholdMs = 900,
+  maxUtteranceMs = 30000,
+}: UseVoiceLoopOptions) {
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const recRef = useRef<Rec | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const sendOnStopRef = useRef<boolean>(false); // only a recording that really contained speech is sent
   const levelRef = useRef<number>(0);
-  const isListeningRef = useRef(false);
-  const isBargeInRef = useRef(false);
-  const hasSpokenRef = useRef(false);
+  const isListeningRef = useRef<boolean>(false);
+  const isBargeInRef = useRef<boolean>(false);
+  const hasSpokenRef = useRef<boolean>(false);
   const silenceTimerRef = useRef<any>(null);
-  const speechFramesRef = useRef(0);
-  const noiseRef = useRef(0.02); // room noise level, learned while nobody is talking
-  // How loud THIS customer usually is (they sit closest to the microphone). Voices in the background (TV, other people)
-  // are quieter than that, so they are not treated as the customer talking.
-  const userLevelRef = useRef(0);
-  const echoRef = useRef(0.05); // how loud the agent's own voice comes back into the microphone while it talks
-  const sumRef = useRef(0);
-  const cntRef = useRef(0);
   const rafRef = useRef<number | null>(null);
-
-  // always call the latest callbacks
-  const onUtteranceRef = useRef(onUtterance);
-  const onBargeInRef = useRef(onBargeIn);
+  // adaptive voice detection
+  const noiseFloorRef = useRef<number>(0.03);   // slow average of the room's background level
+  const userLevelRef = useRef<number>(0);       // average level of THIS customer's speech in the current utterance
+  const aboveSinceRef = useRef<number>(0);      // when the level first rose above the start / barge-in threshold
+  const lastVoiceRef = useRef<number>(0);       // last moment the level was above the speech threshold
+  const onUtteranceRef = useRef(onUtterance);  // always the newest callback (no stale closures)
   onUtteranceRef.current = onUtterance;
-  onBargeInRef.current = onBargeIn;
+  const listenStartRef = useRef<number>(0);     // when this listening round began (no-speech fallback)
+  const speechStartRef = useRef<number>(0);     // when real speech began (for the safety stop)
 
-  const clearSilence = () => {
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-  };
-
-  // Stop the current recorder. send=false throws the audio away.
-  const endRecorder = (send: boolean) => {
-    const rec = recRef.current;
-    recRef.current = null;
-    if (!rec) return;
-    rec.send = send;
-    if (rec.recorder.state !== 'inactive') {
-      try {
-        rec.recorder.stop();
-      } catch {}
-    }
-  };
-
-  const finishUtterance = useCallback(() => {
-    if (!isListeningRef.current) return;
-    isListeningRef.current = false;
-    clearSilence();
-    if (hasSpokenRef.current && cntRef.current > 0) {
-      const avg = sumRef.current / cntRef.current;
-      userLevelRef.current = userLevelRef.current ? userLevelRef.current * 0.7 + avg * 0.3 : avg;
-    }
-    endRecorder(hasSpokenRef.current);
+  // Clean up resources on unmount
+  useEffect(() => {
+    return () => {
+      stopAll();
+    };
   }, []);
 
-  const startRecorder = () => {
-    const stream = streamRef.current;
-    if (!stream) return;
-    endRecorder(false); // an unfinished recording is dropped, never sent
-
-    let mimeType = 'audio/webm;codecs=opus';
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = ['audio/webm', 'audio/mp4', 'audio/ogg'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
+  // stop a recorder WITHOUT sending what it captured (nothing was said / it is being replaced)
+  const discardRecorder = () => {
+    const r = recorderRef.current;
+    if (!r) return;
+    r.ondataavailable = null;
+    r.onstop = null;
+    if (r.state !== 'inactive') {
+      try { r.stop(); } catch {}
     }
-    try {
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      const rec: Rec = { recorder, chunks: [], send: false };
-      recRef.current = rec;
-      recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) rec.chunks.push(e.data);
-      };
-      recorder.onstop = () => {
-        if (!rec.send) return;
-        const blob = new Blob(rec.chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
-        if (blob.size >= MIN_BLOB_BYTES) onUtteranceRef.current(blob);
-      };
-      recorder.start(100);
-    } catch (err) {
-      console.warn('Could not create MediaRecorder:', err);
-    }
+    recorderRef.current = null;
   };
 
-  const stopAll = useCallback(() => {
+  const stopAll = () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = null;
-    clearSilence();
-    endRecorder(false);
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-    analyserRef.current = null;
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    discardRecorder();
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
     if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
       try {
         audioCtxRef.current.close();
       } catch {}
+      audioCtxRef.current = null;
     }
-    audioCtxRef.current = null;
     isListeningRef.current = false;
     levelRef.current = 0;
-  }, []);
+  };
 
-  useEffect(() => stopAll, [stopAll]);
-
+  // Open microphone and initialize audio analyzer
   const open = useCallback(async (): Promise<MediaStream> => {
-    if (streamRef.current && streamRef.current.active) return streamRef.current;
-    if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone not supported.');
+    if (streamRef.current && streamRef.current.active) {
+      return streamRef.current;
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('Microphone not supported on this browser/environment.');
+    }
 
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
     });
+
     streamRef.current = stream;
 
-    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-    if (Ctx) {
-      const ctx = new Ctx();
-      if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+    // Set up Web Audio Analyser
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioContextClass) {
+      const ctx = new AudioContextClass();
+      if (ctx.state === 'suspended') {
+        await ctx.resume().catch(() => {});
+      }
+      const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 512;
       analyser.smoothingTimeConstant = 0.5;
-      ctx.createMediaStreamSource(stream).connect(analyser);
+      source.connect(analyser);
+
       audioCtxRef.current = ctx;
       analyserRef.current = analyser;
 
+      // Start volume measurement loop
       const buffer = new Uint8Array(analyser.frequencyBinCount);
-      const tick = () => {
+      const updateVolume = () => {
         if (!analyserRef.current) return;
         analyserRef.current.getByteFrequencyData(buffer);
         let sum = 0;
-        for (let i = 0; i < buffer.length; i++) sum += buffer[i];
-        const norm = Math.min(1, Math.max(0, sum / buffer.length / 128));
+        for (let i = 0; i < buffer.length; i++) {
+          sum += buffer[i];
+        }
+        const avg = sum / buffer.length;
+        // Normalize 0.0 to 1.0 with soft non-linear curve
+        const norm = Math.min(1, Math.max(0, avg / 128));
         levelRef.current = norm;
 
-        if (!isListeningRef.current || !hasSpokenRef.current) {
-          // learn the room noise from quiet moments
-          if (norm < 0.15) noiseRef.current = noiseRef.current * 0.98 + norm * 0.02;
-        }
+        // VAD (Voice Activity Detection), relative to the room and to the customer's own voice:
+        //  - slight sounds never interrupt the agent: barge-in needs a clearly loud voice kept up for ~0.5 s
+        //  - background voices / TV do not keep the mic "open": after the customer stops, anything much quieter
+        //    than their own speech counts as silence, so the audio is sent a moment later
+        const now = performance.now();
+        const floor = noiseFloorRef.current;
         if (isListeningRef.current) {
-          // after the first sentences: only sound that is close to the customer's own loudness counts as speech
-          const fg = userLevelRef.current ? Math.min(0.32, userLevelRef.current * 0.5) : 0;
-          const base = Math.max(SPEECH_THRESHOLD, noiseRef.current * 2.5 + 0.05, fg);
-          // while the agent talks: the customer must be clearly louder than the agent's own echo (learned live),
-          // so a normal speaking voice interrupts it, but its own voice does not
-          const bargeThr = Math.max(BARGE_IN_MIN, echoRef.current * 1.8 + 0.05);
-          const threshold = isBargeInRef.current ? bargeThr : base;
-          if (isBargeInRef.current && norm <= bargeThr) echoRef.current = echoRef.current * 0.95 + norm * 0.05;
-          // once the customer is talking, soft words and trailing sounds still count as speech (lower bar)
-          const keepTalking = hasSpokenRef.current && norm > base * 0.6;
-          if (norm > threshold || keepTalking) {
-            speechFramesRef.current += 1;
-            if (!isBargeInRef.current && norm > base) {
-              sumRef.current += norm;
-              cntRef.current += 1;
-            }
-            if (speechFramesRef.current >= (isBargeInRef.current ? 9 : MIN_SPEECH_FRAMES)) {
+          const startT = Math.max(0.08, floor * 1.7);   // sensitive enough for quiet voices / phone mics
+          const bargeT = Math.max(0.22, floor * 3);
+          // the longer someone keeps talking, the stricter 'silence' becomes (0.5 -> 0.7 of the customer's own level after 8 s),
+          // so a TV / people in the background cannot hold the microphone open
+          const k = hasSpokenRef.current && now - speechStartRef.current > 8000 ? 0.7 : 0.5;
+          const threshold = isBargeInRef.current ? bargeT : hasSpokenRef.current ? Math.max(startT, userLevelRef.current * k) : startT;
+          const needMs = isBargeInRef.current ? 500 : 200;
+
+          if (norm > threshold) {
+            if (!aboveSinceRef.current) aboveSinceRef.current = now;
+            const sustained = now - aboveSinceRef.current >= needMs;
+            if (sustained || hasSpokenRef.current) {
               if (isBargeInRef.current) {
                 isBargeInRef.current = false;
-                onBargeInRef.current?.();
+                onBargeIn?.();
               }
+              if (!hasSpokenRef.current) speechStartRef.current = aboveSinceRef.current;
               hasSpokenRef.current = true;
-              clearSilence();
+              lastVoiceRef.current = now;
+              userLevelRef.current = userLevelRef.current ? userLevelRef.current * 0.9 + norm * 0.1 : norm;
+              if (silenceTimerRef.current) {
+                clearTimeout(silenceTimerRef.current);
+                silenceTimerRef.current = null;
+              }
             }
           } else {
-            if (!hasSpokenRef.current) speechFramesRef.current = Math.max(0, speechFramesRef.current - 1);
+            aboveSinceRef.current = 0;
             if (hasSpokenRef.current && !silenceTimerRef.current) {
-              silenceTimerRef.current = setTimeout(finishUtterance, silenceThresholdMs);
+              silenceTimerRef.current = setTimeout(() => finishUtterance(), silenceThresholdMs);
             }
           }
+
+          // nobody spoke for 12 s: quietly start a fresh round (the recording is thrown away, never sent, so room noise
+          // can not be 'heard' as an order). Not while the agent is talking.
+          if (!hasSpokenRef.current && !isBargeInRef.current && now - listenStartRef.current > 12000) {
+            listenStartRef.current = now;
+            chunksRef.current = [];
+            if (recorderRef.current && recorderRef.current.state === 'recording') startRecorder();
+          }
+
+          // safety: never wait forever when something keeps the level up
+          if (hasSpokenRef.current && now - speechStartRef.current > maxUtteranceMs) finishUtterance();
+        } else {
+          aboveSinceRef.current = 0;
         }
-        rafRef.current = requestAnimationFrame(tick);
+
+        // learn the room's background level (slowly, only when nobody is speaking)
+        if (!hasSpokenRef.current) noiseFloorRef.current = Math.min(0.2, Math.max(0.01, floor * 0.985 + norm * 0.015));
+
+        rafRef.current = requestAnimationFrame(updateVolume);
       };
-      tick();
+      updateVolume();
     }
+
     return stream;
-  }, [silenceThresholdMs, finishUtterance]);
+  }, [onBargeIn, silenceThresholdMs, maxUtteranceMs]);
+
+  const finishUtterance = useCallback((force: boolean = false) => {
+    if (!isListeningRef.current) return;
+    isListeningRef.current = false;
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+
+    // send only if the customer really spoke (otherwise room noise would be sent again and again)
+    if (!hasSpokenRef.current && !force) {
+      discardRecorder();
+      return;
+    }
+    // a blip shorter than ~0.5 s is a noise, not an order
+    if (lastVoiceRef.current - speechStartRef.current < 500 && !force) {
+      discardRecorder();
+      isListeningRef.current = true;
+      hasSpokenRef.current = false;
+      userLevelRef.current = 0;
+      listenStartRef.current = performance.now();
+      startRecorder();
+      return;
+    }
+    sendOnStopRef.current = true;
+    if (recorderRef.current && recorderRef.current.state === 'recording') {
+      try {
+        recorderRef.current.stop();
+      } catch (err) {
+        console.warn('Error stopping recorder:', err);
+      }
+    }
+  }, []);
 
   const listen = useCallback(
     ({ bargeIn = false }: { bargeIn?: boolean } = {}) => {
       isBargeInRef.current = bargeIn;
-      if (bargeIn) echoRef.current = 0.05;
       isListeningRef.current = true;
       hasSpokenRef.current = false;
-      speechFramesRef.current = 0;
-      sumRef.current = 0;
-      cntRef.current = 0;
-      userLevelRef.current *= 0.97; // slowly forgets, in case the customer moves away from the microphone
-      clearSilence();
+      userLevelRef.current = 0;
+      aboveSinceRef.current = 0;
+      chunksRef.current = [];
+      listenStartRef.current = performance.now();
+
       if (!streamRef.current || !streamRef.current.active) {
-        open().then(startRecorder).catch((err) => console.warn('Could not open microphone:', err));
+        open()
+          .then(() => startRecorder())
+          .catch((err) => console.warn('Could not open stream for listen:', err));
         return;
       }
+
       startRecorder();
     },
     [open]
   );
 
-  // Stop listening and throw away whatever was recorded.
+  const startRecorder = () => {
+    if (!streamRef.current) return;
+    discardRecorder(); // the old recorder must never send its leftovers
+    sendOnStopRef.current = false;
+
+    // Determine supported mimeType
+    let mimeType = 'audio/webm;codecs=opus';
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
+      if (MediaRecorder.isTypeSupported('audio/webm')) {
+        mimeType = 'audio/webm';
+      } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+        mimeType = 'audio/mp4';
+      } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
+        mimeType = 'audio/ogg';
+      } else {
+        mimeType = '';
+      }
+    }
+
+    try {
+      const options = mimeType ? { mimeType } : undefined;
+      const recorder = new MediaRecorder(streamRef.current, options);
+      recorderRef.current = recorder;
+
+      const myChunks: Blob[] = [];   // belongs to THIS recorder only
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) myChunks.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const send = sendOnStopRef.current;
+        sendOnStopRef.current = false;
+        if (!send || myChunks.length === 0) return;
+        const finalType = recorder.mimeType || mimeType || 'audio/webm';
+        const blob = new Blob(myChunks, { type: finalType });
+        if (blob.size < 2500) return;   // too short to be speech (also avoids 'corrupt audio' errors)
+        onUtteranceRef.current(blob);
+      };
+
+      recorder.start(100); // chunk every 100ms
+    } catch (err) {
+      console.warn('Could not create MediaRecorder:', err);
+    }
+  };
+
   const pause = useCallback(() => {
     isListeningRef.current = false;
     isBargeInRef.current = false;
-    clearSilence();
-    endRecorder(false);
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (!sendOnStopRef.current) discardRecorder();   // paused while nothing was said: drop the recording, do not send it
     levelRef.current = 0;
   }, []);
 
-  return { open, listen, pause, stopAll, finishUtterance, levelRef };
+  return {
+    open,
+    listen,
+    pause,
+    stopAll,
+    finishUtterance,
+    levelRef,
+  };
 }

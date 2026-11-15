@@ -57,7 +57,47 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
   const [promptTick, setPromptTick] = useState(0); // lets the agent re-ask the same item
   const [qtyScreen, setQtyScreen] = useState(false); // item step 2: the product is chosen, only the quantity is shown
   const [added, setAdded] = useState({ n: 0, total: 0 });
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);       // gallery / files
+  const cameraRef = useRef<HTMLInputElement>(null);     // phone camera app
+  const videoRef = useRef<HTMLVideoElement>(null);      // live camera (laptops)
+  const camStreamRef = useRef<MediaStream | null>(null);
+  const [liveCam, setLiveCam] = useState(false);
+  const [camError, setCamError] = useState('');
+
+  const stopLiveCam = () => {
+    camStreamRef.current?.getTracks().forEach((t) => t.stop());
+    camStreamRef.current = null;
+    setLiveCam(false);
+  };
+  /** "Take a photo": phones open their camera app; computers open a live camera view with a capture button */
+  const takePhoto = async () => {
+    setCamError('');
+    const touch = (navigator.maxTouchPoints || 0) > 0;
+    if (touch || !navigator.mediaDevices?.getUserMedia) { cameraRef.current?.click(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      camStreamRef.current = stream;
+      setLiveCam(true);
+      setTimeout(() => { if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play().catch(() => {}); } }, 0);
+    } catch {
+      setCamError('Camera is blocked or not available. Please choose a picture instead.');
+    }
+  };
+  const snap = () => {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth) return;
+    const c = document.createElement('canvas');
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
+    c.getContext('2d')?.drawImage(v, 0, 0);
+    c.toBlob((b) => {
+      if (!b) return;
+      stopLiveCam();
+      onFile(new File([b], 'camera.jpg', { type: 'image/jpeg' }));
+    }, 'image/jpeg', 0.92);
+  };
+  useEffect(() => () => { camStreamRef.current?.getTracks().forEach((t) => t.stop()); }, []);
+  useEffect(() => { if (!isOpen) stopLiveCam(); }, [isOpen]);
   const [voiceOn, setVoiceOn] = useState(true);
   const [vPhase, setVPhase] = useState<'idle' | 'speaking' | 'listening' | 'thinking'>('idle');
   const [heardText, setHeardText] = useState('');
@@ -176,23 +216,23 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
     <button
       onClick={onPick}
       className={`relative text-left rounded-2xl border p-3 flex flex-col cursor-pointer transition-all ${
-        selected ? 'border-emerald-500 bg-emerald-50/60 ring-2 ring-emerald-500/25' : 'border-slate-200 bg-white hover:border-slate-300'
+        selected ? 'border-[#3fc27b] bg-[#f3fbf6]/60 ring-2 ring-[#3fc27b]/25' : 'border-[#e0f4e7] bg-white hover:border-[#b3e4c4]'
       }`}
     >
       {n != null && (
         <span className="absolute top-2 left-2 w-6 h-6 rounded-full bg-slate-800/80 text-white text-[11px] font-bold flex items-center justify-center">{n}</span>
       )}
       {selected && (
-        <span className="absolute top-2 right-2 w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center">
+        <span className="absolute top-2 right-2 w-6 h-6 rounded-full bg-[#1daa61] text-white flex items-center justify-center">
           <Check className="w-4 h-4" />
         </span>
       )}
       <div className="h-24 flex items-center justify-center mb-2">
         {p.image ? <img src={p.image} alt={p.name} className="max-h-full max-w-full object-contain" /> : <span className="text-4xl">{p.icon}</span>}
       </div>
-      <p className="text-xs font-bold text-slate-900 leading-tight line-clamp-2">{p.name}</p>
-      <p className="text-[11px] text-slate-500 mt-0.5">{p.size}</p>
-      <p className="text-sm font-black text-emerald-700 mt-1">{money(p.price)}</p>
+      <p className="text-xs font-bold text-[#1f5233] leading-tight line-clamp-2">{p.name}</p>
+      <p className="text-[11px] text-[#4d7a5c] mt-0.5">{p.size}</p>
+      <p className="text-sm font-black text-[#0f6e3d] mt-1">{money(p.price)}</p>
     </button>
   );
 
@@ -512,15 +552,15 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="relative w-full max-w-3xl bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
+      <div className="relative w-full max-w-3xl bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-[#e0f4e7] overflow-hidden flex flex-col max-h-[94dvh] sm:max-h-[92vh]">
         {/* header */}
-        <div className="p-5 px-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+        <div className="p-4 sm:p-5 sm:px-6 border-b border-[#e0f4e7] flex items-center justify-between bg-[#f3fbf6]/80">
           <div>
-            <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
-              <ScanIcon className="w-5 h-5 text-emerald-600" /> Scan your grocery list
+            <h3 className="text-lg font-black text-[#1f5233] flex items-center gap-2">
+              <ScanIcon className="w-5 h-5 text-[#148a4c]" /> Scan your grocery list
             </h3>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-[#4d7a5c]">
               {step === 'upload' && 'Take a photo of your list. We read it and you choose each item.'}
               {step === 'detected' && 'These are the items we found on your list.'}
               {step === 'pick' && (qtyScreen ? `Item ${idx + 1} of ${rows.length}: how many do you want?` : `Item ${idx + 1} of ${rows.length}: choose the one you want.`)}
@@ -532,7 +572,7 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
             <button
               onClick={() => setVoiceOn((v) => !v)}
               className={`px-3 h-8 rounded-full text-[11px] font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                voiceOn ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                voiceOn ? 'bg-[#1daa61] text-white' : 'bg-[#e0f4e7] text-[#4d7a5c]'
               } ${voiceOn && vPhase === 'listening' ? 'animate-pulse' : ''}`}
               title="Voice help on/off"
             >
@@ -541,7 +581,7 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
             </button>
           <button
             onClick={close}
-            className="w-8 h-8 rounded-full hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center cursor-pointer"
+            className="w-8 h-8 rounded-full hover:bg-[#e0f4e7] text-[#4d7a5c] hover:text-[#1f5233] flex items-center justify-center cursor-pointer"
             aria-label="Close"
           >
             <X className="w-5 h-5" />
@@ -550,37 +590,54 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
         </div>
 
         {voiceOn && heardText && step !== 'upload' && (
-          <p className="px-6 py-1.5 text-[11px] text-slate-500 bg-emerald-50/50 border-b border-emerald-100">You said: “{heardText}”</p>
+          <p className="px-6 py-1.5 text-[11px] text-[#4d7a5c] bg-[#f3fbf6]/50 border-b border-[#e0f4e7]">You said: “{heardText}”</p>
         )}
 
         {step === 'pick' && (
-          <div className="h-1.5 bg-slate-100">
-            <div className="h-full bg-emerald-500 transition-all" style={{ width: `${((idx + 1) / rows.length) * 100}%` }} />
+          <div className="h-1.5 bg-[#e0f4e7]">
+            <div className="h-full bg-[#3fc27b] transition-all" style={{ width: `${((idx + 1) / rows.length) * 100}%` }} />
           </div>
         )}
 
-        <div className="p-5 sm:p-6 overflow-y-auto space-y-5">
-          <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
+        <div className="p-4 sm:p-6 overflow-y-auto space-y-5">
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ''; }} />
+          <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ''; }} />
 
           {/* 1. upload */}
           {step === 'upload' && (
             <>
-              {!preview ? (
-                <button
-                  onClick={() => fileRef.current?.click()}
-                  className="w-full border-2 border-dashed border-emerald-200 hover:border-emerald-400 bg-emerald-50/40 rounded-2xl py-12 flex flex-col items-center gap-3 cursor-pointer transition-colors"
-                >
-                  <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                    <Camera className="w-7 h-7" />
+              {liveCam ? (
+                <div className="flex flex-col items-center gap-3">
+                  <video ref={videoRef} playsInline muted className="w-full max-h-[55vh] rounded-2xl bg-black object-cover" />
+                  <div className="flex items-center gap-3">
+                    <button onClick={snap} className="px-6 py-2.5 rounded-full bg-[#1daa61] hover:bg-[#148a4c] text-white text-sm font-bold flex items-center gap-2 cursor-pointer shadow-md shadow-[#1daa61]/25">
+                      <Camera className="w-4 h-4" /> Capture
+                    </button>
+                    <button onClick={stopLiveCam} className="px-5 py-2.5 rounded-full bg-white border border-[#b3e4c4] text-[#2a6b43] text-sm font-bold cursor-pointer">Cancel</button>
                   </div>
-                  <span className="text-sm font-bold text-slate-800">Take a photo or choose a picture</span>
-                  <span className="text-xs text-slate-500">English, Urdu or Roman Urdu · printed or handwritten</span>
-                </button>
+                </div>
+              ) : !preview ? (
+                <div className="border-2 border-dashed border-[#b3e4c4] bg-[#f3fbf6]/40 rounded-2xl py-8 sm:py-10 px-4 flex flex-col items-center gap-4">
+                  <div className="w-14 h-14 rounded-full bg-[#e0f4e7] text-[#0f6e3d] flex items-center justify-center">
+                    <ScanIcon className="w-7 h-7" />
+                  </div>
+                  <span className="text-sm font-bold text-[#1f5233] text-center">Add a picture of your grocery list</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-md">
+                    <button onClick={takePhoto} className="h-12 rounded-full bg-gradient-to-r from-[#1daa61] to-[#3fc27b] hover:from-[#148a4c] hover:to-[#1daa61] text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-[#1daa61]/25 active:scale-95 transition-all">
+                      <Camera className="w-5 h-5" /> Take a photo
+                    </button>
+                    <button onClick={() => fileRef.current?.click()} className="h-12 rounded-full bg-white border-2 border-[#b3e4c4] hover:border-[#1daa61] text-[#2a6b43] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all">
+                      <Upload className="w-5 h-5" /> Choose from gallery
+                    </button>
+                  </div>
+                  <span className="text-xs text-[#4d7a5c] text-center">English, Urdu or Roman Urdu · printed or handwritten</span>
+                  {camError && <span className="text-xs font-semibold text-red-600 text-center">{camError}</span>}
+                </div>
               ) : (
                 <div className="flex flex-col items-center text-center gap-3 py-2">
-                  <img src={preview} alt="Your list" className="w-28 h-36 object-cover rounded-xl border border-slate-200" />
+                  <img src={preview} alt="Your list" className="w-28 h-36 object-cover rounded-xl border border-[#e0f4e7]" />
                   {busy && (
-                    <p className="text-sm font-semibold text-emerald-700 flex items-center justify-center gap-2">
+                    <p className="text-sm font-semibold text-[#0f6e3d] flex items-center justify-center gap-2">
                       <Loader2 className="w-4 h-4 animate-spin" /> Reading your list…
                     </p>
                   )}
@@ -590,16 +647,20 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
                     </p>
                   )}
                   {!busy && (
-                    <button
-                      onClick={() => {
-                        setPreview('');
-                        setError('');
-                        setTimeout(() => fileRef.current?.click(), 0);
-                      }}
-                      className="px-5 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-600/25"
-                    >
-                      <Upload className="w-4 h-4" /> Upload another picture
-                    </button>
+                    <div className="flex flex-wrap items-center justify-center gap-2.5">
+                      <button
+                        onClick={() => { setPreview(''); setError(''); setTimeout(() => takePhoto(), 0); }}
+                        className="px-5 py-2.5 rounded-full bg-[#1daa61] hover:bg-[#148a4c] text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-[#1daa61]/25"
+                      >
+                        <Camera className="w-4 h-4" /> Take another photo
+                      </button>
+                      <button
+                        onClick={() => { setPreview(''); setError(''); setTimeout(() => fileRef.current?.click(), 0); }}
+                        className="px-5 py-2.5 rounded-full bg-white border-2 border-[#b3e4c4] text-[#2a6b43] text-sm font-bold flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <Upload className="w-4 h-4" /> Choose another
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
@@ -615,26 +676,26 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
           {step === 'detected' && (
             <>
               <div className="flex gap-4 items-start">
-                {preview && <img src={preview} alt="Your list" className="w-24 h-32 object-cover rounded-xl border border-slate-200 shrink-0" />}
+                {preview && <img src={preview} alt="Your list" className="w-24 h-32 object-cover rounded-xl border border-[#e0f4e7] shrink-0" />}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-slate-900">
+                  <p className="text-sm font-bold text-[#1f5233]">
                     We found {rows.length} item{rows.length === 1 ? '' : 's'}
                   </p>
-                  <p className="text-xs text-slate-500 mb-2">Remove anything that isn't on your list, then we'll go through them one by one.</p>
+                  <p className="text-xs text-[#4d7a5c] mb-2">Remove anything that isn't on your list, then we'll go through them one by one.</p>
                   <ul className="space-y-1.5">
                     {rows.map((r, i) => (
-                      <li key={i} className="flex items-center gap-2 text-sm bg-slate-50 border border-slate-100 rounded-xl px-3 py-2">
-                        <span className="w-5 text-xs text-slate-400 font-bold">{i + 1}</span>
-                        <span className="flex-1 font-semibold text-slate-800 truncate">
+                      <li key={i} className="flex items-center gap-2 text-sm bg-[#f3fbf6] border border-[#e0f4e7] rounded-xl px-3 py-2">
+                        <span className="w-5 text-xs text-[#7fa28d] font-bold">{i + 1}</span>
+                        <span className="flex-1 font-semibold text-[#1f5233] truncate">
                           {r.line.text}
-                          {r.line.qty_text && <span className="font-normal text-slate-500"> · {r.line.qty_text}</span>}
+                          {r.line.qty_text && <span className="font-normal text-[#4d7a5c]"> · {r.line.qty_text}</span>}
                         </span>
                         {r.line.status === 'unknown' ? (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 uppercase">Search needed</span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#e0f4e7] text-[#4d7a5c] uppercase">Search needed</span>
                         ) : (
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 uppercase">Found</span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#e0f4e7] text-[#2a6b43] uppercase">Found</span>
                         )}
-                        <button onClick={() => removeLine(i)} className="text-slate-400 hover:text-red-600 cursor-pointer" aria-label="Remove">
+                        <button onClick={() => removeLine(i)} className="text-[#7fa28d] hover:text-red-600 cursor-pointer" aria-label="Remove">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </li>
@@ -648,17 +709,17 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
           {/* 3. one item at a time */}
           {step === 'pick' && cur && (
             <>
-              <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3">
-                <p className="text-[11px] uppercase font-bold text-slate-400">On your list</p>
-                <p className="text-base font-black text-slate-900">
+              <div className="rounded-2xl bg-[#f3fbf6] border border-[#e0f4e7] px-4 py-3">
+                <p className="text-[11px] uppercase font-bold text-[#7fa28d]">On your list</p>
+                <p className="text-base font-black text-[#1f5233]">
                   {cur.line.text}
-                  {cur.line.qty_text && <span className="text-sm font-semibold text-slate-500"> · {cur.line.qty_text}</span>}
+                  {cur.line.qty_text && <span className="text-sm font-semibold text-[#4d7a5c]"> · {cur.line.qty_text}</span>}
                 </p>
               </div>
 
               {!(qtyScreen && curPicked) && best.length > 0 && (
                 <div>
-                  <p className="text-xs font-bold text-slate-500 mb-2">{best.length === 1 ? 'Best match' : 'Best matches'}</p>
+                  <p className="text-xs font-bold text-[#4d7a5c] mb-2">{best.length === 1 ? 'Best match' : 'Best matches'}</p>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {best.map(({ c, p }, k) => (
                       <OptionCard key={p.id} n={k + 1} p={p} qty={c.quantity} selected={cur.picked === c.id} onPick={() => choose(c.id, c.quantity)} />
@@ -671,7 +732,7 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
                 <div>
                   <button
                     onClick={() => setShowMore((v) => !v)}
-                    className="text-xs font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 cursor-pointer"
+                    className="text-xs font-bold text-[#0f6e3d] hover:text-[#1f5233] flex items-center gap-1 cursor-pointer"
                   >
                     <ChevronDown className={`w-4 h-4 transition-transform ${showMore ? 'rotate-180' : ''}`} />
                     {showMore ? 'Hide other options' : `More options (${more.length})`}
@@ -687,24 +748,24 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
               )}
 
               {!(qtyScreen && curPicked) && best.length === 0 && (
-                <p className="text-xs text-slate-500">We couldn't match this line automatically. Search our store below, or skip it.</p>
+                <p className="text-xs text-[#4d7a5c]">We couldn't match this line automatically. Search our store below, or skip it.</p>
               )}
 
               {/* search the store (always available, essential when nothing matched) */}
               {!(qtyScreen && curPicked) && (
               <div>
                 <div className="relative">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <Search className="w-4 h-4 text-[#7fa28d] absolute left-3 top-2.5" />
                   <input
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder="Search our store for this item…"
-                    className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-emerald-500 focus:outline-hidden"
+                    className="w-full pl-9 pr-3 py-2 bg-[#f3fbf6] border border-[#e0f4e7] rounded-xl text-xs text-[#1f5233] focus:bg-white focus:border-[#3fc27b] focus:outline-hidden"
                   />
                 </div>
                 {query.trim() && (
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
-                    {found.length === 0 && <p className="text-xs text-slate-400 col-span-full">Nothing found for “{query}”.</p>}
+                    {found.length === 0 && <p className="text-xs text-[#7fa28d] col-span-full">Nothing found for “{query}”.</p>}
                     {found.map((p) => (
                       <OptionCard key={p.id} p={p} qty={1} selected={cur.picked === Number(p.id)} onPick={() => choose(Number(p.id), 1)} />
                     ))}
@@ -714,33 +775,33 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
               )}
 
               {qtyScreen && curPicked && (
-                <div className="rounded-3xl border border-emerald-200 bg-emerald-50/40 p-6 flex flex-col items-center text-center gap-3">
+                <div className="rounded-3xl border border-[#b3e4c4] bg-[#f3fbf6]/40 p-6 flex flex-col items-center text-center gap-3">
                   <div className="h-32 flex items-center justify-center">
                     {curPicked.image ? <img src={curPicked.image} alt={curPicked.name} className="max-h-full max-w-full object-contain" /> : <span className="text-6xl">{curPicked.icon}</span>}
                   </div>
                   <div>
-                    <p className="text-base font-black text-slate-900">{curPicked.name}</p>
-                    <p className="text-xs text-slate-500">{curPicked.size} · {money(curPicked.price)}</p>
+                    <p className="text-base font-black text-[#1f5233]">{curPicked.name}</p>
+                    <p className="text-xs text-[#4d7a5c]">{curPicked.size} · {money(curPicked.price)}</p>
                   </div>
-                  {cur.line.qty_text && <p className="text-xs text-slate-500">You wrote: <span className="font-bold text-slate-700">{cur.line.qty_text}</span></p>}
-                  <p className="text-sm font-bold text-slate-800 mt-1">How many do you want?</p>
+                  {cur.line.qty_text && <p className="text-xs text-[#4d7a5c]">You wrote: <span className="font-bold text-[#2a6b43]">{cur.line.qty_text}</span></p>}
+                  <p className="text-sm font-bold text-[#1f5233] mt-1">How many do you want?</p>
                   <div className="flex items-center gap-4">
-                    <button onClick={() => update(idx, { qty: Math.max(1, cur.qty - 1) })} className="w-12 h-12 rounded-full border border-slate-300 bg-white flex items-center justify-center cursor-pointer hover:bg-slate-50" aria-label="Less">
+                    <button onClick={() => update(idx, { qty: Math.max(1, cur.qty - 1) })} className="w-12 h-12 rounded-full border border-[#b3e4c4] bg-white flex items-center justify-center cursor-pointer hover:bg-[#f3fbf6]" aria-label="Less">
                       <Minus className="w-5 h-5" />
                     </button>
-                    <span className="w-14 text-center text-3xl font-black text-slate-900">{cur.qty}</span>
-                    <button onClick={() => update(idx, { qty: Math.min(99, cur.qty + 1) })} className="w-12 h-12 rounded-full border border-slate-300 bg-white flex items-center justify-center cursor-pointer hover:bg-slate-50" aria-label="More">
+                    <span className="w-14 text-center text-3xl font-black text-[#1f5233]">{cur.qty}</span>
+                    <button onClick={() => update(idx, { qty: Math.min(99, cur.qty + 1) })} className="w-12 h-12 rounded-full border border-[#b3e4c4] bg-white flex items-center justify-center cursor-pointer hover:bg-[#f3fbf6]" aria-label="More">
                       <Plus className="w-5 h-5" />
                     </button>
                   </div>
-                  <p className="text-sm font-black text-emerald-700">{money((curPicked.price ?? 0) * cur.qty)}</p>
+                  <p className="text-sm font-black text-[#0f6e3d]">{money((curPicked.price ?? 0) * cur.qty)}</p>
                   <button
                     onClick={() => {
                       qtyModeRef.current = null;
                       setQtyScreen(false);
                       setPromptTick((n) => n + 1);
                     }}
-                    className="text-xs font-bold text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                    className="text-xs font-bold text-[#4d7a5c] hover:text-[#1f5233] underline cursor-pointer"
                   >
                     Change the product
                   </button>
@@ -752,19 +813,19 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
           {/* 5. added to the cart: what next? */}
           {step === 'added' && (
             <div className="flex flex-col items-center text-center gap-3 py-8">
-              <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center">
+              <div className="w-16 h-16 rounded-full bg-[#e0f4e7] text-[#0f6e3d] flex items-center justify-center">
                 <CheckCircle2 className="w-9 h-9" />
               </div>
-              <p className="text-lg font-black text-slate-900">{added.n} item{added.n === 1 ? '' : 's'} added to your cart</p>
-              <p className="text-sm text-slate-500">Total {money(added.total)} · What would you like to do next?</p>
+              <p className="text-lg font-black text-[#1f5233]">{added.n} item{added.n === 1 ? '' : 's'} added to your cart</p>
+              <p className="text-sm text-[#4d7a5c]">Total {money(added.total)} · What would you like to do next?</p>
               <div className="flex flex-wrap items-center justify-center gap-3 mt-2">
-                <button onClick={goCheckout} className="px-6 py-3 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm shadow-md shadow-emerald-600/30 flex items-center gap-2 cursor-pointer">
+                <button onClick={goCheckout} className="px-6 py-3 rounded-full bg-[#1daa61] hover:bg-[#148a4c] text-white font-extrabold text-sm shadow-md shadow-[#1daa61]/30 flex items-center gap-2 cursor-pointer">
                   <ShoppingCart className="w-4 h-4" /> Checkout
                 </button>
-                <button onClick={() => { stopVoice(); close(); }} className="px-5 py-3 rounded-full bg-white border border-slate-300 text-slate-700 font-bold text-sm hover:bg-slate-50 flex items-center gap-2 cursor-pointer">
+                <button onClick={() => { stopVoice(); close(); }} className="px-5 py-3 rounded-full bg-white border border-[#b3e4c4] text-[#2a6b43] font-bold text-sm hover:bg-[#f3fbf6] flex items-center gap-2 cursor-pointer">
                   <Store className="w-4 h-4" /> Keep browsing
                 </button>
-                <button onClick={() => reset()} className="px-5 py-3 rounded-full bg-white border border-emerald-300 text-emerald-800 font-bold text-sm hover:bg-emerald-50 flex items-center gap-2 cursor-pointer">
+                <button onClick={() => reset()} className="px-5 py-3 rounded-full bg-white border border-[#96d9ae] text-[#2a6b43] font-bold text-sm hover:bg-[#f3fbf6] flex items-center gap-2 cursor-pointer">
                   <Camera className="w-4 h-4" /> Add more products
                 </button>
               </div>
@@ -775,26 +836,26 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
           {step === 'summary' && (
             <>
               {chosen.length === 0 ? (
-                <p className="text-sm text-slate-500 text-center py-8">You haven't chosen any items. Go back to pick some.</p>
+                <p className="text-sm text-[#4d7a5c] text-center py-8">You haven't chosen any items. Go back to pick some.</p>
               ) : (
                 <ul className="space-y-2">
                   {rows.map((r, i) => {
                     const p = r.picked != null ? byId.get(String(r.picked)) : undefined;
                     if (!p || r.skipped) return null;
                     return (
-                      <li key={i} className="flex items-center gap-3 border border-slate-200 rounded-2xl p-3">
-                        <div className="w-14 h-14 rounded-xl bg-white border border-slate-100 flex items-center justify-center overflow-hidden shrink-0">
+                      <li key={i} className="flex items-center gap-3 border border-[#e0f4e7] rounded-2xl p-3">
+                        <div className="w-14 h-14 rounded-xl bg-white border border-[#e0f4e7] flex items-center justify-center overflow-hidden shrink-0">
                           {p.image ? <img src={p.image} alt="" className="w-full h-full object-contain" /> : <span>{p.icon}</span>}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-[11px] text-slate-400 truncate">List: {r.line.text}</p>
-                          <p className="text-sm font-bold text-slate-900 truncate">{p.name}</p>
-                          <p className="text-xs text-slate-500">
+                          <p className="text-[11px] text-[#7fa28d] truncate">List: {r.line.text}</p>
+                          <p className="text-sm font-bold text-[#1f5233] truncate">{p.name}</p>
+                          <p className="text-xs text-[#4d7a5c]">
                             {p.size} · {r.qty} × {money(p.price)}
                           </p>
                         </div>
-                        <span className="text-sm font-black text-emerald-700 shrink-0">{money((p.price ?? 0) * r.qty)}</span>
-                        <button onClick={() => goTo(i)} className="text-xs font-bold text-emerald-700 hover:text-emerald-900 cursor-pointer shrink-0">
+                        <span className="text-sm font-black text-[#0f6e3d] shrink-0">{money((p.price ?? 0) * r.qty)}</span>
+                        <button onClick={() => goTo(i)} className="text-xs font-bold text-[#0f6e3d] hover:text-[#1f5233] cursor-pointer shrink-0">
                           Change
                         </button>
                       </li>
@@ -803,7 +864,7 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
                 </ul>
               )}
               {rows.some((r) => r.skipped || r.picked == null) && (
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-[#7fa28d]">
                   Skipped:{' '}
                   {rows
                     .filter((r) => r.skipped || r.picked == null)
@@ -817,14 +878,14 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
 
         {/* footer buttons */}
         {step === 'detected' && (
-          <div className="p-4 px-6 border-t border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
-            <button onClick={reset} className="text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer">
+          <div className="p-3 sm:p-4 sm:px-6 border-t border-[#e0f4e7] bg-[#f3fbf6]/80 flex flex-wrap items-center justify-between gap-2 sm:gap-3">
+            <button onClick={reset} className="text-xs font-bold text-[#4d7a5c] hover:text-[#1f5233] cursor-pointer">
               Start over
             </button>
             <button
               onClick={() => goTo(0)}
               disabled={rows.length === 0}
-              className="px-6 py-3 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm shadow-md shadow-emerald-600/30 flex items-center gap-2 cursor-pointer disabled:opacity-40"
+              className="px-6 py-3 rounded-full bg-[#1daa61] hover:bg-[#148a4c] text-white font-extrabold text-sm shadow-md shadow-[#1daa61]/30 flex items-center gap-2 cursor-pointer disabled:opacity-40"
             >
               Choose items <ArrowRight className="w-4 h-4" />
             </button>
@@ -832,24 +893,24 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
         )}
 
         {step === 'pick' && (
-          <div className="p-4 px-6 border-t border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
+          <div className="p-3 sm:p-4 sm:px-6 border-t border-[#e0f4e7] bg-[#f3fbf6]/80 flex flex-wrap items-center justify-between gap-2 sm:gap-3">
             <button
               onClick={() => (idx > 0 ? goTo(idx - 1) : setStep('detected'))}
-              className="text-xs font-bold text-slate-500 hover:text-slate-800 flex items-center gap-1 cursor-pointer"
+              className="text-xs font-bold text-[#4d7a5c] hover:text-[#1f5233] flex items-center gap-1 cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" /> Back
             </button>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
               <button
                 onClick={skipItem}
-                className="px-4 py-3 rounded-full border border-slate-300 text-slate-600 hover:bg-white font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                className="px-4 py-3 rounded-full border border-[#b3e4c4] text-[#4d7a5c] hover:bg-white font-bold text-xs flex items-center gap-1.5 cursor-pointer"
               >
                 <SkipForward className="w-4 h-4" /> Skip
               </button>
               <button
                 onClick={confirmItem}
                 disabled={cur?.picked == null}
-                className="px-6 py-3 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm shadow-md shadow-emerald-600/30 flex items-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                className="px-6 py-3 rounded-full bg-[#1daa61] hover:bg-[#148a4c] text-white font-extrabold text-sm shadow-md shadow-[#1daa61]/30 flex items-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {!qtyScreen ? 'Choose quantity' : idx + 1 < rows.length ? 'Confirm & next' : 'Confirm & finish'} <ArrowRight className="w-4 h-4" />
               </button>
@@ -858,19 +919,19 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
         )}
 
         {step === 'summary' && (
-          <div className="p-4 px-6 border-t border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
-            <div className="text-xs text-slate-600">
-              <span className="font-bold text-slate-900">{chosen.length}</span> item{chosen.length === 1 ? '' : 's'} · total{' '}
-              <span className="font-bold text-emerald-700">{money(total)}</span>
+          <div className="p-3 sm:p-4 sm:px-6 border-t border-[#e0f4e7] bg-[#f3fbf6]/80 flex flex-wrap items-center justify-between gap-2 sm:gap-3">
+            <div className="text-xs text-[#4d7a5c]">
+              <span className="font-bold text-[#1f5233]">{chosen.length}</span> item{chosen.length === 1 ? '' : 's'} · total{' '}
+              <span className="font-bold text-[#0f6e3d]">{money(total)}</span>
             </div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => goTo(0)} className="text-xs font-bold text-slate-500 hover:text-slate-800 cursor-pointer">
+            <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
+              <button onClick={() => goTo(0)} className="text-xs font-bold text-[#4d7a5c] hover:text-[#1f5233] cursor-pointer">
                 Review again
               </button>
               {onContinueByVoice && openRows.length > 0 && (
                 <button
                   onClick={byVoice}
-                  className="px-4 py-3 rounded-full bg-white border border-emerald-300 text-emerald-800 font-bold text-xs hover:bg-emerald-50 cursor-pointer"
+                  className="px-4 py-3 rounded-full bg-white border border-[#96d9ae] text-[#2a6b43] font-bold text-xs hover:bg-[#f3fbf6] cursor-pointer"
                 >
                   🎙 Finish {openRows.length} left by voice
                 </button>
@@ -878,7 +939,7 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
               <button
                 onClick={addAll}
                 disabled={chosen.length === 0}
-                className="px-6 py-3 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm shadow-md shadow-emerald-600/30 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                className="px-6 py-3 rounded-full bg-[#1daa61] hover:bg-[#148a4c] text-white font-extrabold text-sm shadow-md shadow-[#1daa61]/30 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Add to cart
               </button>

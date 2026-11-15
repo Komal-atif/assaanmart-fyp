@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X } from 'lucide-react';
+import { X, Mic } from 'lucide-react';
+import { AnimatedLogo } from './AnimatedLogo';
 import { Product } from '../types';
 import { VoicePhase } from './voice/VoiceAvatar';
-import { VoiceAgentPanel } from './voice/VoiceAgentPanel';
-import { VoiceBasketPanel } from './voice/VoiceBasketPanel';
+import { VoiceStage } from './voice/VoiceStage';
 import { VoiceProductModal } from './voice/VoiceProductModal';
+import { VoiceBasketPanel } from './voice/VoiceBasketPanel';
 import { useVoiceLoop } from '../hooks/useVoiceLoop';
 import {
   getBackendUrl,
@@ -88,17 +89,29 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   onOrderPlacedRef.current = onOrderPlaced;
 
   // ---- audio ---------------------------------------------------------------
-  const playOnce = (url: string) =>
+  // `onStart` fires when the sound REALLY starts, so "Speaking…" is only shown while the customer can hear the agent.
+  // If the sound has not started after 8 s the turn is given up (the window never hangs waiting for audio).
+  const playOnce = (url: string, onStart?: () => void) =>
     new Promise<void>((resolve) => {
       const a = playerRef.current || (playerRef.current = new Audio());
       if (resolverRef.current) resolverRef.current();
       resolverRef.current = resolve;
+      let started = false;
+      const guard = window.setTimeout(() => { if (!started) done(); }, 8000);
       const done = () => {
+        window.clearTimeout(guard);
         if (resolverRef.current === resolve) resolverRef.current = null;
         resolve();
       };
+      a.onplaying = () => {
+        if (started) return;
+        started = true;
+        window.clearTimeout(guard);
+        onStart?.();
+      };
       a.onended = done;
       a.onerror = done;
+      a.preload = 'auto';
       a.src = url.startsWith('http') ? url : `${getBackendUrl()}${url}`;
       a.play().catch(done);
     });
@@ -116,11 +129,15 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     const my = ++tokenRef.current;
     bargedRef.current = false;
     if (path) {
-      setPhase('speaking');
-      if (interruptRef.current && activeRef.current) voice.listen({ bargeIn: true });
-      else voice.pause();
-      await playOnce(path);
-      await new Promise((r) => setTimeout(r, 350)); // let the room echo of the agent's voice fade before listening
+      setPhase('thinking');   // the sound is being fetched: not "speaking" yet
+      await playOnce(path, () => {
+        if (my !== tokenRef.current) return;
+        setPhase('speaking');
+        // the microphone listens for a real interruption only while the agent is audible
+        if (interruptRef.current && activeRef.current) voice.listen({ bargeIn: true });
+        else voice.pause();
+      });
+      await new Promise((r) => setTimeout(r, 200)); // let the room echo of the agent's voice fade before listening
     }
     if (my !== tokenRef.current) return;
     if (needLoginRef.current) {
@@ -205,7 +222,10 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     setPhase('thinking');
     setNotice('');
     try {
-      const d = await converseVoice(blob, historyRef.current);
+      const d = await Promise.race([
+        converseVoice(blob, historyRef.current),
+        new Promise<never>((_, rej) => window.setTimeout(() => rej(new Error('converse timeout')), 25000)),
+      ]);
       applyTurn(d, { silentIfEmpty: true });
       if (!d.user_text) {
         if (activeRef.current) {
@@ -297,24 +317,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     if (isOpen && !started && phase === 'off') startSession();
   }, [isOpen]);
 
-  const onToggle = async () => {
-    if (phase === 'off') {
-      if (!started) return startSession();
-      await voice.open();
-      activeRef.current = true;
-      setPhase('listening');
-      voice.listen();
-    } else if (phase === 'speaking') {
-      stopSpeech();
-    } else {
-      activeRef.current = false;
-      tokenRef.current += 1;
-      stopSpeech();
-      voice.pause();
-      setPhase('off');
-    }
-  };
-
   const handleStartOver = async () => {
     shutDown();
     setStarted(false);
@@ -363,57 +365,78 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
   if (!isOpen) return null;
 
+  const live = phase === 'listening' || phase === 'speaking' || phase === 'thinking';
+
   return (
-    <div
-      className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-200"
-    >
+    <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-200">
+      {/* the window is exactly as tall as the screen (minus a small margin); only its content area may scroll on phones */}
       <div
-        className="relative w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-slate-100 my-auto"
+        className="relative w-full max-w-5xl h-[calc(100dvh-1rem)] sm:h-[calc(100dvh-2rem)] bg-white rounded-3xl shadow-2xl border border-[#e0f4e7] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute top-3 right-3 z-10 w-8 h-8 rounded-full hover:bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
-          aria-label="Close"
-        >
-          <X className="w-5 h-5" />
-        </button>
-
-        <div className="p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-          <div className="lg:col-span-7">
-            <VoiceAgentPanel
-              phase={phase}
-              started={started}
-              reply={reply}
-              heard={heard}
-              lang={lang}
-              notice={notice}
-              levelRef={voice.levelRef}
-              onToggle={onToggle}
-              onStartOver={handleStartOver}
-              interrupt={interrupt}
-              onInterruptChange={setInterrupt}
-            />
+        {/* title bar */}
+        <div className="shrink-0 flex items-center justify-between gap-3 px-4 sm:px-6 py-2.5 border-b border-[#e0f4e7] bg-gradient-to-r from-[#f3fbf6] to-white">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="w-9 h-9 rounded-xl bg-white border border-[#e0f4e7] p-1 flex items-center justify-center shrink-0">
+              <AnimatedLogo className="w-full h-full" />
+            </span>
+            <div className="min-w-0">
+              <p className="font-extrabold text-[#1f5233] leading-tight text-sm sm:text-base truncate">
+                Assan<span className="text-[#1DAA61]">Mart</span> Voice
+              </p>
+              <p className="text-[11px] text-[#4d7a5c] flex items-center gap-1.5">
+                <span className={`w-1.5 h-1.5 rounded-full ${live ? 'bg-[#1DAA61] animate-pulse' : 'bg-[#b3e4c4]'}`} />
+                {live ? 'Live, hands-free' : 'Ready'}
+                <Mic className="w-3 h-3" />
+              </p>
+            </div>
           </div>
-          <div className="lg:col-span-5">
-            <VoiceBasketPanel
-              cart={cart}
-              busy={busy}
-              message={orderMessage}
-              onDismissMessage={() => setOrderMessage('')}
-              onQty={handleQtyChange}
-              onConfirm={() => runAction('confirm')}
-              onDecline={() => runAction('decline')}
-              onSyncToMainCart={() => syncStoreCart(cart)}
-            />
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-9 h-9 rounded-full bg-white border border-[#e0f4e7] hover:bg-[#e0f4e7] text-[#2a6b43] flex items-center justify-center transition-colors cursor-pointer shrink-0"
+            aria-label="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* content: fills the rest of the screen height; the robot scales to fit */}
+        <div className="flex-1 min-h-0 overflow-y-auto lg:overflow-hidden p-3 sm:p-4">
+          <div className="grid grid-cols-1 lg:grid-cols-12 lg:grid-rows-[minmax(0,1fr)] gap-3 sm:gap-4 items-stretch lg:h-full">
+            <div className="lg:col-span-7 lg:min-h-0">
+              <VoiceStage
+                phase={phase}
+                started={started}
+                reply={reply}
+                heard={heard}
+                lang={lang}
+                notice={notice}
+                options={options}
+                cart={cart}
+                levelRef={voice.levelRef}
+                onPick={handlePickOption}
+                interrupt={interrupt}
+                onInterruptChange={setInterrupt}
+                onRetry={handleStartOver}
+              />
+            </div>
+            <div className="lg:col-span-5 lg:min-h-0 lg:overflow-y-auto">
+              <VoiceBasketPanel
+                cart={cart}
+                busy={busy}
+                message={orderMessage}
+                onDismissMessage={() => setOrderMessage('')}
+                onQty={handleQtyChange}
+                onConfirm={() => runAction('confirm')}
+                onDecline={() => runAction('decline')}
+                onSyncToMainCart={() => syncStoreCart(cart)}
+              />
+            </div>
           </div>
         </div>
       </div>
-
-      <div onClick={(e) => e.stopPropagation()}>
-        <VoiceProductModal options={options} phase={phase} onSelect={handlePickOption} />
-      </div>
+      <VoiceProductModal options={options} phase={phase} onSelect={handlePickOption} />
     </div>
   );
 };

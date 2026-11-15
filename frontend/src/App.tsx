@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { CardShapes } from './components/CardShapes';
 import { Header } from './components/Header';
-import './responsive.css';
-import  LandingPage  from './components/LandingPage';
+import type { AppView } from './components/Header';
+import { ServicesPage } from './components/ServicesPage';
+import { ContactPage } from './components/ContactPage';
 import { StoreDashboard } from './components/StoreDashboard';
+import { LandingPage } from './components/LandingPage';
 import { Footer } from './components/Footer';
 import { CartDrawer } from './components/CartDrawer';
 import { VoiceAssistantModal } from './components/VoiceAssistantModal';
@@ -22,7 +24,6 @@ import { CartItem, Product, User, Order } from './types';
 import { Check, X, ShoppingBag } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { MyOrdersModal } from './components/MyOrdersModal';
-import { ListOrdered } from 'lucide-react';
 
 interface FlyingItem {
   id: string;
@@ -36,8 +37,8 @@ interface FlyingItem {
 }
 
 export default function App() {
-  // Navigation View: 'landing' or 'dashboard'
-  const [currentView, setCurrentView] = useState<'landing' | 'dashboard'>('landing');
+  // Navigation View: the store opens first; Services and Contact Us are separate pages
+  const [currentView, setCurrentView] = useState<AppView>('landing');
 
   // Products come from the backend (what the admin added / changed). The old Excel data is used ONLY if the backend cannot be reached.
   const [productList, setProductList] = useState<Product[]>([]);
@@ -340,20 +341,34 @@ export default function App() {
 
   const navigateSection = (sectionId: string) => {
     if (sectionId === 'home') {
-      setCurrentView('landing');
+      setCurrentView('dashboard');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
-    const el = document.getElementById(sectionId);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth' });
+    const scrollToIt = () => document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // "How it works" lives on the landing page
+    if (sectionId === 'how-it-works') {
+      if (currentView !== 'landing') {
+        setCurrentView('landing');
+        window.setTimeout(scrollToIt, 200);
+      } else scrollToIt();
+      return;
     }
+    // sections live on the store home: leave other pages / search / category first, then scroll once it has drawn
+    if (currentView !== 'dashboard' || !document.getElementById(sectionId)) {
+      setCurrentView('dashboard');
+      setSearchTerm('');
+      window.dispatchEvent(new Event('assanmart:show-home'));
+      window.setTimeout(scrollToIt, 200);
+      return;
+    }
+    scrollToIt();
   };
 
   const cartCount = cart.reduce((total, item) => total + item.quantity, 0);
 
   return (
-    <div className="dashboard-page min-h-screen text-[#064e3b] flex flex-col font-sans selection:bg-[#cde8dd] selection:text-[#064e3b] relative">
+    <div className="dashboard-page min-h-screen text-[#2a6b43] flex flex-col font-sans selection:bg-[#b3e4c4] selection:text-[#2a6b43] relative">
       
       {/* Dynamic Animated Living Gradient Mesh & Floating Orbs Background */}
       <AnimatedBackground />
@@ -363,8 +378,8 @@ export default function App() {
 
       {/* Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 bg-[#064e3b] text-white px-5 py-3 rounded-full shadow-2xl text-xs sm:text-sm font-semibold border border-white/20 animate-in fade-in slide-in-from-bottom-4 duration-200">
-          <div className="w-5 h-5 rounded-full bg-[#10b981] text-white flex items-center justify-center shrink-0">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 bg-[#1daa61] text-white px-5 py-3 rounded-full shadow-2xl text-xs sm:text-sm font-semibold border border-white/20 animate-in fade-in slide-in-from-bottom-4 duration-200">
+          <div className="w-5 h-5 rounded-full bg-[#7fcf9a] text-white flex items-center justify-center shrink-0">
             <Check className="w-3.5 h-3.5 stroke-[3]" />
           </div>
           <span>{toastMessage}</span>
@@ -394,7 +409,7 @@ export default function App() {
             {f.image ? (
               <img src={f.image} alt="" />
             ) : (
-              <span className="w-8 h-8 rounded-full bg-[#064e3b] text-white flex items-center justify-center">
+              <span className="w-8 h-8 rounded-full bg-[#1daa61] text-white flex items-center justify-center">
                 <ShoppingBag className="w-4 h-4" />
               </span>
             )}
@@ -414,6 +429,7 @@ export default function App() {
         onOpenCart={() => setIsCartOpen(true)}
         onOpenVoice={() => { setVoiceLaunch(null); setIsVoiceOpen(true); }}
         onOpenAuth={() => setIsAuthOpen(true)}
+        onOpenOrders={() => setIsOrdersOpen(true)}
         onLogout={async () => {
           await supabase.auth.signOut();
           localStorage.removeItem('am_user');
@@ -447,17 +463,20 @@ export default function App() {
       <main className="flex-1 relative z-10">
         {currentView === 'landing' ? (
           <LandingPage
-            onBrowseStore={() => {
-              setCurrentView('dashboard');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
+            onBrowseStore={() => { setCurrentView('dashboard'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
             onOpenVoice={() => { setVoiceLaunch(null); setIsVoiceOpen(true); }}
-            onQuickSearch={(query) => {
-              setSearchTerm(query);
-              setCurrentView('dashboard');
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
+            onOpenImageScanner={() => setIsImageScannerOpen(true)}
+            onQuickSearch={(q) => { setSearchTerm(q); setCurrentView('dashboard'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
           />
+        ) : currentView === 'services' ? (
+          <ServicesPage
+            onOpenVoice={() => { setVoiceLaunch(null); setIsVoiceOpen(true); }}
+            onOpenImageScanner={() => setIsImageScannerOpen(true)}
+            onBrowseStore={() => { setCurrentView('dashboard'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+            onContact={() => { setCurrentView('contact'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+          />
+        ) : currentView === 'contact' ? (
+          <ContactPage user={user} />
         ) : (
           <StoreDashboard
             categories={categories}
@@ -486,6 +505,10 @@ export default function App() {
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
         onNavigateSection={navigateSection}
+        onNavigateView={(view) => {
+          setCurrentView(view);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
       />
 
       {/* Favourites (opens from the header heart, like the cart) */}
@@ -562,16 +585,7 @@ export default function App() {
 
       {/* My Orders */}
       <MyOrdersModal isOpen={isOrdersOpen} onClose={() => setIsOrdersOpen(false)} user={user} />
-      {user && !isOrdersOpen && (
-        <button
-          onClick={() => setIsOrdersOpen(true)}
-          className="fixed bottom-5 left-5 z-40 flex items-center gap-2 px-4 py-2.5 rounded-full bg-white border border-emerald-200 text-emerald-800 text-xs font-bold shadow-lg hover:bg-emerald-50 cursor-pointer"
-        >
-          <ListOrdered className="w-4 h-4" /> My Orders
-        </button>
-      )}
 
-      {/* Product Detail Modal */}
       {/* Product Detail Modal */}
 <ProductDetailModal
   key={selectedProductDetail?.id ?? 'no-product'}

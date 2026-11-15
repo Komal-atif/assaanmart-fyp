@@ -46,9 +46,9 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({ isOpen, onClose, u
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[92vh]">
-        <div className="p-5 px-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
+      <div className="relative w-full max-w-2xl bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[94dvh] sm:max-h-[92vh]">
+        <div className="p-4 sm:p-5 sm:px-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
           <div>
             <h3 className="text-lg font-black text-slate-900">My Orders</h3>
             <p className="text-xs text-slate-500">{user ? `Orders placed by ${user.name}` : 'Sign in to see your orders'}</p>
@@ -74,11 +74,11 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({ isOpen, onClose, u
           </div>
         </div>
 
-        <div className="p-5 overflow-y-auto space-y-3">
+        <div className="p-4 sm:p-5 overflow-y-auto space-y-3">
           {!user ? (
             <p className="text-sm text-slate-500 text-center py-10">Please sign in to see your past orders.</p>
           ) : loading && orders.length === 0 ? (
-            <div className="py-10 flex justify-center text-emerald-600">
+            <div className="py-10 flex justify-center text-[#46a468]">
               <Loader2 className="w-6 h-6 animate-spin" />
             </div>
           ) : error ? (
@@ -97,13 +97,13 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({ isOpen, onClose, u
                     onClick={() => setOpenId(isOpenRow ? null : o.id)}
                     className="w-full p-4 flex items-center gap-3 text-left hover:bg-slate-50 cursor-pointer"
                   >
-                    <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                    <div className="w-9 h-9 rounded-xl bg-[#f3fbf6] text-[#46a468] flex items-center justify-center shrink-0">
                       {o.source === 'voice' ? <Mic className="w-4 h-4" /> : <ShoppingBag className="w-4 h-4" />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-slate-900">
                         Order #AM-{o.id}
-                        <span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 uppercase">
+                        <span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#e0f4e7] text-[#2a6b43] uppercase">
                           {o.status}
                         </span>
                       </p>
@@ -112,7 +112,7 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({ isOpen, onClose, u
                         {o.source === 'voice' ? ' · by voice' : ''}
                       </p>
                     </div>
-                    <span className="text-sm font-black text-emerald-700 shrink-0">PKR {Math.round(o.total).toLocaleString()}</span>
+                    <span className="text-sm font-black text-[#378553] shrink-0">PKR {Math.round(o.total).toLocaleString()}</span>
                     {isOpenRow ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
                   </button>
 

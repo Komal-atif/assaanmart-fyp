@@ -28,12 +28,12 @@ export const FavoritesModal: React.FC<FavoritesModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/50 backdrop-blur-xs animate-in fade-in duration-200" onClick={onClose}>
       <aside
-        className="relative w-full max-w-md h-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-200"
+        className="relative w-[92vw] sm:w-full max-w-md h-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-200"
         onClick={(e) => e.stopPropagation()}
         aria-label="My favourites"
       >
         {/* header */}
-        <div className="p-5 px-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
+        <div className="p-4 sm:p-5 sm:px-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/80">
           <div className="flex items-center gap-2">
             <Heart className="w-5 h-5 text-rose-500 fill-rose-500" />
             <h3 className="text-lg font-black text-slate-900">My Favourites</h3>
@@ -69,12 +69,12 @@ export const FavoritesModal: React.FC<FavoritesModalProps> = ({
                     className="w-16 h-16 rounded-xl bg-white border border-slate-100 flex items-center justify-center overflow-hidden shrink-0 cursor-pointer"
                     aria-label={`View ${p.name}`}
                   >
-                    {p.image ? <img src={p.image} alt="" className="w-full h-full object-contain" /> : <Package className="w-6 h-6 text-[#064e3b]/70" />}
+                    {p.image ? <img src={p.image} alt="" className="w-full h-full object-contain" /> : <Package className="w-6 h-6 text-[#2a6b43]/70" />}
                   </button>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold text-slate-900 line-clamp-2 leading-snug">{p.name}</p>
                     <p className="text-[11px] text-slate-500">{p.size}</p>
-                    <p className="text-sm font-black text-[#064e3b] mt-0.5">{p.price != null ? `Rs. ${Math.round(p.price).toLocaleString('en-PK')}` : 'Price unavailable'}</p>
+                    <p className="text-sm font-black text-[#2a6b43] mt-0.5">{p.price != null ? `Rs. ${Math.round(p.price).toLocaleString('en-PK')}` : 'Price unavailable'}</p>
                   </div>
                   <div className="flex flex-col items-end gap-2 shrink-0">
                     <button
@@ -90,17 +90,17 @@ export const FavoritesModal: React.FC<FavoritesModalProps> = ({
                     ) : qty === 0 ? (
                       <button
                         onClick={(e) => onAddToCart(p, e.currentTarget)}
-                        className="px-3 h-8 rounded-xl bg-[#064e3b] hover:bg-[#065f46] text-white text-xs font-bold flex items-center gap-1 cursor-pointer active:scale-95"
+                        className="px-3 h-8 rounded-xl bg-[#46a468] hover:bg-[#378553] text-white text-xs font-bold flex items-center gap-1 cursor-pointer active:scale-95"
                       >
                         <Plus className="w-3.5 h-3.5" /> Add
                       </button>
                     ) : (
-                      <div className="h-8 rounded-xl bg-[#064e3b] text-white flex items-center gap-1 px-1">
-                        <button onClick={() => onChangeQuantity(p.id, -1)} className="w-6 h-6 rounded-lg bg-white/20 hover:bg-white hover:text-[#064e3b] flex items-center justify-center cursor-pointer" aria-label="Remove one">
+                      <div className="h-8 rounded-xl bg-[#46a468] text-white flex items-center gap-1 px-1">
+                        <button onClick={() => onChangeQuantity(p.id, -1)} className="w-6 h-6 rounded-lg bg-white/20 hover:bg-white hover:text-[#2a6b43] flex items-center justify-center cursor-pointer" aria-label="Remove one">
                           <Minus className="w-3 h-3" />
                         </button>
                         <span className="w-5 text-center text-xs font-black">{qty}</span>
-                        <button onClick={(e) => onAddToCart(p, e.currentTarget)} className="w-6 h-6 rounded-lg bg-white/20 hover:bg-white hover:text-[#064e3b] flex items-center justify-center cursor-pointer" aria-label="Add one">
+                        <button onClick={(e) => onAddToCart(p, e.currentTarget)} className="w-6 h-6 rounded-lg bg-white/20 hover:bg-white hover:text-[#2a6b43] flex items-center justify-center cursor-pointer" aria-label="Add one">
                           <Plus className="w-3 h-3" />
                         </button>
                       </div>

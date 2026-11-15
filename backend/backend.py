@@ -11,6 +11,7 @@ from datetime import datetime
 import pandas as pd
 from functools import lru_cache
 from dataclasses import dataclass
+from typing import Optional, Callable
 import edge_tts
 from dotenv import load_dotenv
 
@@ -1651,7 +1652,8 @@ def ui_options(lang):
                    next_value="next" if paged else None,
                    items=[item_view(v, lang, v["id"] in shown) for v in current["variants"]])
     else:
-        out.update(title=current["product"]["name"], product=item_view(current["product"], lang, True))
+        out.update(title=current["product"]["name"], product=item_view(current["product"], lang, True),
+                   suggested_qty=current.get("suggested") or 1)
     return out
 
 
@@ -1890,18 +1892,249 @@ async def handle_variant(utt, lang):
 
 
 def select_product(lang, p):
+    """A product was chosen: ALWAYS ask how many. If the customer already said an amount ("2 kg chawal") the question
+    proposes the converted number of packs (2 kg of a 5 kg bag = 1 pack) and "yes" / "next" / "ji" keeps it."""
     current["product"] = p
     current["stage"] = "quantity"
     said = (current.get("slot") or {}).get("qty")
-    if said:                                       # the customer already told us how many: don't ask again
-        qty, rounded = packs_from_text(said, p)
-        if qty is None:
-            qty = parse_quantity_rules(said)
-        if qty and 0 < qty <= 100:
-            return add_selected_to_cart(lang, qty, rounded)
-    text = t(lang, f"{p['name']} is {money(p['price'], lang)} each. How many would you like?",
-             f"{p['name']} کی قیمت {money(p['price'], lang)} ہے۔ کتنے چاہیے؟")
-    return text, text
+    asked = parse_amount(said) if said else None
+    d, s_, suggested = quantity_prompt(lang, p, money, asked)
+    current["suggested"] = suggested
+    return d, s_
+
+
+# ====================================================================================================
+# UNIT-AWARE QUANTITIES  ("2 kg chawal" of a 5 kg bag = 1 pack, not 2 bags)
+#   parse_amount / packs_for / quantity_prompt / interpret_reply / key_info   (names prefixed QR_/_qr_ never clash)
+# ====================================================================================================
+QR_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+
+QR_NUM_WORDS = {
+    "one": 1, "ek": 1, "aik": 1, "ایک": 1, "two": 2, "do": 2, "دو": 2, "three": 3, "teen": 3, "تین": 3,
+    "four": 4, "char": 4, "chaar": 4, "چار": 4, "five": 5, "panch": 5, "paanch": 5, "پانچ": 5,
+    "six": 6, "chay": 6, "cheh": 6, "chhe": 6, "چھ": 6, "seven": 7, "saat": 7, "سات": 7,
+    "eight": 8, "aath": 8, "آٹھ": 8, "nine": 9, "nau": 9, "نو": 9, "ten": 10, "das": 10, "دس": 10,
+    "half": 0.5, "aadha": 0.5, "adha": 0.5, "aadhi": 0.5, "adhi": 0.5, "آدھا": 0.5, "آدھی": 0.5,
+    "dedh": 1.5, "derh": 1.5, "ڈیڑھ": 1.5, "dhai": 2.5, "dhaai": 2.5, "ڈھائی": 2.5,
+    "sawa": 1.25, "سوا": 1.25, "paune": 0.75, "pauna": 0.75, "پونے": 0.75,
+}
+
+# unit word -> (canonical unit, dimension, multiplier to the base of that dimension)
+#   mass base = gram, volume base = ml, count base = 1 piece
+QR_UNITS = {
+    "kg": ("kg", "mass", 1000), "kgs": ("kg", "mass", 1000), "kilo": ("kg", "mass", 1000), "kilos": ("kg", "mass", 1000),
+    "kilogram": ("kg", "mass", 1000), "kilograms": ("kg", "mass", 1000), "کلو": ("kg", "mass", 1000),
+    "کلوگرام": ("kg", "mass", 1000), "کلو گرام": ("kg", "mass", 1000),
+    "g": ("g", "mass", 1), "gm": ("g", "mass", 1), "gms": ("g", "mass", 1), "gram": ("g", "mass", 1),
+    "grams": ("g", "mass", 1), "gramme": ("g", "mass", 1), "گرام": ("g", "mass", 1),
+    "l": ("l", "vol", 1000), "lt": ("l", "vol", 1000), "ltr": ("l", "vol", 1000), "litre": ("l", "vol", 1000),
+    "litres": ("l", "vol", 1000), "liter": ("l", "vol", 1000), "liters": ("l", "vol", 1000), "لیٹر": ("l", "vol", 1000),
+    "ml": ("ml", "vol", 1), "mls": ("ml", "vol", 1),
+    "dozen": ("dozen", "count", 12), "darjan": ("dozen", "count", 12), "درجن": ("dozen", "count", 12),
+    "pc": ("pc", "count", 1), "pcs": ("pc", "count", 1), "piece": ("pc", "count", 1), "pieces": ("pc", "count", 1),
+    "عدد": ("pc", "count", 1),
+}
+# these words mean "packs" (a plain count of what the shop sells)
+QR_PACK_WORDS = {"pack", "packs", "packet", "packets", "bag", "bags", "box", "boxes", "bottle", "bottles", "tin", "tins",
+              "can", "cans", "carton", "cartons", "پیک", "پیکٹ", "ڈبہ", "ڈبے", "بوتل"}
+
+# answers that mean "keep what you proposed, go on"
+QR_KEEP = {"yes", "yeah", "yep", "ok", "okay", "sure", "fine", "same", "next", "continue", "proceed", "done", "right",
+        "correct", "haan", "han", "ji", "jee", "theek", "thik", "sahi", "bilkul", "wohi", "wahi", "bas", "aage", "agla",
+        "agli", "chalo", "ہاں", "جی", "ٹھیک", "صحیح", "بالکل", "وہی", "بس", "آگے", "اگلا", "اگلی", "اوکے", "چلو"}
+QR_KEEP_PHRASES = ("ek hi", "aik hi", "ایک ہی", "one only", "just one", "only one", "same one", "that's it", "thats it",
+                "that is fine", "keep it", "keep one", "keep 1")
+
+
+@dataclass
+class QRAmount:
+    value: float
+    unit: Optional[str] = None      # 'kg' | 'g' | 'l' | 'ml' | 'dozen' | 'pc' | None (plain number)
+    dim: Optional[str] = None       # 'mass' | 'vol' | 'count' | None
+    base: Optional[float] = None    # value in grams / ml / pieces
+
+    @property
+    def has_unit(self) -> bool:
+        return self.unit is not None
+
+
+def _qr_fmt(n: float) -> str:
+    return str(int(n)) if float(n).is_integer() else (f"{n:.2f}".rstrip("0").rstrip("."))
+
+
+def _qr_words(text: str) -> list[str]:
+    text = text.translate(QR_DIGITS).lower()
+    text = re.sub(r"(\d)([a-z؀-ۿ])", r"\1 \2", text)      # 2kg -> 2 kg
+    text = re.sub(r"([a-z؀-ۿ])(\d)", r"\1 \2", text)
+    return re.findall(r"\d+(?:\.\d+)?|[a-z؀-ۿ']+", text)
+
+
+def _qr_number(tok: str) -> Optional[float]:
+    if re.fullmatch(r"\d+(?:\.\d+)?", tok):
+        return float(tok)
+    return float(QR_NUM_WORDS[tok]) if tok in QR_NUM_WORDS else None
+
+
+def parse_amount(text: str) -> Optional[QRAmount]:
+    """First amount in the sentence.  '2 kg' / 'do kilo' / 'dedh kilo' / 'aadha kilo' / '500 gram' / '3' / 'teen packet'.
+    A bare unit ('kilo chawal') counts as 1 of that unit."""
+    toks = _qr_words(text)
+    for i, tok in enumerate(toks):
+        n = _qr_number(tok)
+        if n is None:
+            continue
+        nxt = toks[i + 1] if i + 1 < len(toks) else ""
+        if nxt in QR_UNITS:
+            u, dim, mult = QR_UNITS[nxt]
+            return QRAmount(n, u, dim, n * mult)
+        return QRAmount(n)                                       # plain number = number of packs
+    for tok in toks:                                           # "kilo chawal", "litre doodh" = one of that unit
+        if tok in ("kilo", "kg", "کلو", "litre", "liter", "لیٹر"):
+            u, dim, mult = QR_UNITS[tok]
+            return QRAmount(1.0, u, dim, float(mult))
+    return None
+
+
+def qr_pack_size(product: dict) -> Optional[tuple[str, float]]:
+    """(dimension, size of ONE pack in grams / ml / pieces) from the product's size or name.
+    Handles '5 kg', '500g', '1 L', '12 pcs', '1 dozen' and multipacks like '6 x 250 ml'."""
+    for field in (product.get("size") or "", product.get("name") or ""):
+        txt = field.translate(QR_DIGITS).lower()
+        m = re.search(r"(\d+)\s*[x×]\s*(\d+(?:\.\d+)?)\s*([a-z]+)", txt)
+        if m and m.group(3) in QR_UNITS:                                      # 6 x 250 ml
+            _, dim, mult = QR_UNITS[m.group(3)]
+            return dim, int(m.group(1)) * float(m.group(2)) * mult
+        for n, u in re.findall(r"(\d+(?:\.\d+)?)\s*([a-z؀-ۿ]+)", txt):
+            if u in QR_UNITS:
+                _, dim, mult = QR_UNITS[u]
+                return dim, float(n) * mult
+    return None
+
+
+def packs_for(amount: QRAmount, product: dict) -> Optional[dict]:
+    """How many packs of `product` the spoken amount means.
+         2 kg  of a 5 kg bag  -> 1 pack, rounded up      10 kg -> 2 packs      500 g of a 1 kg pack -> 1 pack, rounded up
+         '3' (no unit)        -> 3 packs                  1.5 kg of a 1 kg pack -> 2 packs, rounded up
+    Returns None when the unit cannot be compared with the pack (e.g. '2 kg' of eggs)."""
+    if not amount.has_unit:
+        n = max(1.0, amount.value)
+        return {"packs": n, "rounded": False, "pack_text": None}
+    ps = qr_pack_size(product)
+    if not ps or ps[0] != amount.dim or ps[1] <= 0:
+        return None
+    ratio = amount.base / ps[1]
+    packs = float(max(1, math.ceil(ratio - 1e-9)))
+    return {"packs": packs, "rounded": abs(ratio - packs) > 1e-6, "pack_text": product.get("size") or ""}
+
+
+def _qr_amount_text(a: QRAmount) -> str:
+    names = {"kg": "kg", "g": "g", "l": "L", "ml": "ml", "dozen": "dozen", "pc": "pcs"}
+    return f"{_qr_fmt(a.value)} {names.get(a.unit, a.unit)}" if a.has_unit else _qr_fmt(a.value)
+
+
+def quantity_prompt(lang: str, product: dict, money: Callable[[float, str], str],
+                    asked: Optional[QRAmount] = None) -> tuple[str, str, Optional[float]]:
+    """The question asked every time a product has been chosen.  Returns (display, speech, suggested_packs).
+    `asked` = what the customer already said for this item ('2 kg'), if anything."""
+    name, price = product["name"], money(product["price"], lang)
+    en = lang != "urdu"
+    sug = packs_for(asked, product) if asked else None
+
+    if asked and asked.has_unit and sug:
+        packs = sug["packs"]
+        pk = product.get("size") or "one pack"
+        if en:
+            if sug["rounded"]:
+                t = (f"You asked for {_qr_amount_text(asked)}. {name} comes in {pk} packs at {price} each, "
+                     f"so that is {_qr_fmt(packs)} pack{'s' if packs != 1 else ''}. Say yes to keep {_qr_fmt(packs)}, or tell me how many.")
+            else:
+                t = (f"{_qr_amount_text(asked)} of {name} is {_qr_fmt(packs)} pack{'s' if packs != 1 else ''} of {pk} at {price} each. "
+                     f"Say yes to keep it, or tell me how many.")
+        else:
+            t = (f"آپ نے {_qr_amount_text(asked)} کہا۔ {name} {pk} کے پیک میں ملتا ہے، قیمت {price} فی پیک، "
+                 f"یعنی {_qr_fmt(packs)} پیک۔ ٹھیک ہے تو ہاں کہیں، یا بتائیں کتنے چاہیے۔")
+        return t, t, packs
+
+    if asked and not asked.has_unit:                       # "3" -> propose 3 packs
+        packs = max(1.0, asked.value)
+        t = (f"{name} is {price} each. You said {_qr_fmt(packs)}. Say yes to keep {_qr_fmt(packs)}, or tell me how many."
+             if en else f"{name} کی قیمت {price} ہے۔ آپ نے {_qr_fmt(packs)} کہا۔ ٹھیک ہے تو ہاں کہیں، یا بتائیں کتنے چاہیے۔")
+        return t, t, packs
+
+    # nothing said yet (or a unit that does not fit this pack, e.g. "2 kg" of eggs): ask, and offer "1 / next"
+    t = (f"{name} is {price} each. How many would you like? Say 1 or next to keep one and move on."
+         if en else f"{name} کی قیمت {price} ہے۔ کتنے چاہیے؟ ایک رکھنا ہو تو ایک یا اگلا کہیں۔")
+    return t, t, 1.0
+
+
+def interpret_reply(text: str, product: dict, suggested: Optional[float] = 1.0) -> dict:
+    """What the customer answered to the quantity question.
+        {'kind': 'keep',     'packs': suggested}              yes / next / ji / wohi / ek hi / bas
+        {'kind': 'quantity', 'packs': n, 'rounded': bool}     '3', 'teen', '2 kg' (converted to packs)
+        {'kind': 'unclear'}                                   nothing usable: ask again"""
+    low = text.translate(QR_DIGITS).lower()
+    amt = parse_amount(low)
+    if amt is not None:
+        conv = packs_for(amt, product)
+        if conv is None:                                   # unit does not fit this product: treat the number as packs
+            conv = {"packs": max(1.0, amt.value), "rounded": False}
+        if conv["packs"] > 100:
+            return {"kind": "unclear"}
+        return {"kind": "quantity", "packs": conv["packs"], "rounded": conv["rounded"]}
+    toks = set(_qr_words(low))
+    if toks & QR_KEEP or any(p in low for p in QR_KEEP_PHRASES):
+        return {"kind": "keep", "packs": suggested if suggested else 1.0}
+    return {"kind": "unclear"}
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Key-information extraction: shrink a long, noisy sentence to what the agent needs
+# ---------------------------------------------------------------------------------------------------------------
+QR_FILLERS = {
+    "um", "uh", "umm", "hmm", "ok", "okay", "so", "well", "please", "pls", "kindly", "like", "actually", "basically",
+    "mujhe", "mujhay", "mjhe", "mera", "meri", "hamein", "humein", "chahiye", "chahie", "chahiyen", "chaiye", "dena", "dedo",
+    "de", "do", "dijiye", "dijiy", "karo", "kar", "karna", "hai", "hain", "hy", "ho", "toh", "to", "bhi", "ji", "aap", "ap",
+    "can", "could", "you", "i", "want", "need", "would", "give", "me", "some", "get", "the", "a", "an", "and", "also", "and",
+    "اور", "مجھے", "چاہیے", "چاہئے", "دیں", "دیجیے", "کر", "دو", "ہے", "ہیں", "بھی", "تو", "پلیز", "جی",
+}
+QR_KEEP_ALWAYS = QR_KEEP | {"no", "nahi", "nahin", "cancel", "confirm", "next", "more", "skip", "remove", "hata", "نہیں", "منسوخ", "کنفرم"}
+
+
+def key_info(text: str, max_words: int = 18) -> dict:
+    """Pulls out the important part of what the customer said, so the agent works on a short clean phrase:
+        'um mujhe do kilo chawal chahiye please aur ek dozen anday'
+          -> {'clean': 'kilo chawal dozen anday', 'amount': QRAmount(2, 'kg'), 'amounts': [...], 'is_keep': False}
+    * amounts keep their numbers and units (they are the heart of the sentence)
+    * fillers / politeness words are dropped; the first `max_words` words that matter are kept
+    * yes / no / next / cancel style answers are never dropped."""
+    toks = _qr_words(text)
+    keep: list[str] = []
+    amounts: list[QRAmount] = []
+    i = 0
+    while i < len(toks):
+        tok = toks[i]
+        n = _qr_number(tok)
+        nxt = toks[i + 1] if i + 1 < len(toks) else ""
+        if n is not None and nxt in QR_UNITS:                      # "2 kg" stays together
+            u, dim, mult = QR_UNITS[nxt]
+            amounts.append(QRAmount(n, u, dim, n * mult))
+            keep.append(f"{_qr_fmt(n)} {nxt}")
+            i += 2
+            continue
+        if n is not None and re.fullmatch(r"\d+(?:\.\d+)?", tok):
+            amounts.append(QRAmount(n))
+            keep.append(tok)
+        elif n is not None and tok not in QR_FILLERS:              # number words (teen, paanch ...)
+            amounts.append(QRAmount(n))
+            keep.append(tok)
+        elif tok in QR_KEEP_ALWAYS or tok not in QR_FILLERS:
+            keep.append(tok)
+        i += 1
+    seen_adj = [w for k, w in enumerate(keep) if k == 0 or w != keep[k - 1]]   # drop stutters ("chawal chawal")
+    clean = " ".join(seen_adj[:max_words])
+    toks_set = set(toks)
+    return {"clean": clean, "amount": amounts[0] if amounts else None, "amounts": amounts,
+            "is_keep": bool(toks_set & QR_KEEP) or any(p in text.lower() for p in QR_KEEP_PHRASES)}
 
 
 # ---- quantity -------------------------------------------------------------
@@ -2090,7 +2323,14 @@ async def handle_quantity(utt, lang):
         other = [v for v in full if v is not p and same_size(want, size_pairs(v["name"] + " " + v["size"]))]
         if len(other) == 1:
             return select_product(lang, other[0])
+    r = interpret_reply(utt.both, p, current.get("suggested") or 1.0)
+    if r["kind"] == "keep":                        # "yes" / "next" / "ji" / "wohi": keep the proposed number and go on
+        return add_selected_to_cart(lang, r["packs"], False)
     qty, rounded = packs_from_text(utt.both, p)
+    if qty is None and r["kind"] == "quantity":
+        am = parse_amount(utt.both)
+        if am is not None and am.has_unit:         # "do kilo" / "dedh kilo" is a weight, not 2 packs
+            qty, rounded = r["packs"], r["rounded"]
     if qty is None and not want:
         qty = parse_quantity_rules(utt.both)
     if qty is None:

@@ -40,17 +40,17 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         className="absolute inset-0 bg-slate-950/50 backdrop-blur-xs transition-opacity animate-in fade-in duration-200"
       />
 
-      <div className="fixed inset-y-0 right-0 max-w-full flex pl-10">
-        <div className="w-screen max-w-md bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+      <div className="fixed inset-y-0 right-0 max-w-full flex pl-8 sm:pl-10">
+        <div className="w-[92vw] sm:w-screen max-w-md bg-white shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
           
           {/* Drawer Header */}
-          <div className="p-5 px-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+          <div className="p-4 sm:p-5 sm:px-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center">
+              <div className="w-8 h-8 rounded-full bg-[#e0f4e7] text-[#2a6b43] flex items-center justify-center">
                 <ShoppingBag className="w-4 h-4" />
               </div>
               <h3 className="text-lg font-extrabold text-slate-900">Your Grocery Cart</h3>
-              <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+              <span className="text-xs font-bold text-[#378553] bg-[#f3fbf6] px-2 py-0.5 rounded-full border border-[#b3e4c4]">
                 {cart.reduce((total, item) => total + item.quantity, 0)} items
               </span>
             </div>
@@ -63,12 +63,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
           </div>
 
           {/* Free Delivery Goal Bar */}
-          <div className="p-4 px-6 bg-emerald-50/50 border-b border-emerald-100">
-            <div className="flex items-center justify-between text-xs font-semibold text-emerald-950 mb-1.5">
+          <div className="p-3 sm:p-4 sm:px-6 bg-[#f3fbf6]/50 border-b border-[#e0f4e7]">
+            <div className="flex items-center justify-between text-xs font-semibold text-[#153a24] mb-1.5">
               <span className="flex items-center gap-1.5">
-                <Truck className="w-4 h-4 text-emerald-700" />
+                <Truck className="w-4 h-4 text-[#378553]" />
                 {remainingForFree === 0 ? (
-                  <span className="text-emerald-700 font-bold flex items-center gap-1">
+                  <span className="text-[#378553] font-bold flex items-center gap-1">
                     <CheckCircle2 className="w-3.5 h-3.5" /> You unlocked FREE delivery!
                   </span>
                 ) : (
@@ -79,19 +79,19 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               </span>
               <span>{Math.round(progressPercent)}%</span>
             </div>
-            <div className="w-full h-2 bg-emerald-200/60 rounded-full overflow-hidden">
+            <div className="w-full h-2 bg-[#b3e4c4]/60 rounded-full overflow-hidden">
               <div
-                className="h-full bg-emerald-600 rounded-full transition-all duration-300"
+                className="h-full bg-[#46a468] rounded-full transition-all duration-300"
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
           </div>
 
           {/* Cart Item List */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-4 divide-y divide-slate-100">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 divide-y divide-slate-100">
             {cart.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center py-16 space-y-4">
-                <div className="w-16 h-16 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600">
+                <div className="w-16 h-16 rounded-full bg-[#f3fbf6] border border-[#e0f4e7] flex items-center justify-center text-[#46a468]">
                   <ShoppingBag className="w-8 h-8" />
                 </div>
                 <div>
@@ -102,16 +102,16 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </div>
                 <button
                   onClick={onClose}
-                  className="px-6 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/20 cursor-pointer"
+                  className="px-6 py-2.5 rounded-full bg-[#46a468] hover:bg-[#378553] text-white font-bold text-xs shadow-md shadow-[#46a468]/20 cursor-pointer"
                 >
                   Start Shopping
                 </button>
               </div>
             ) : (
               cart.map((item) => (
-                <div key={item.id} className="pt-4 first:pt-0 flex gap-4 items-center">
+                <div key={item.id} className="pt-4 first:pt-0 flex gap-3 sm:gap-4 items-center">
                   {/* Thumbnail */}
-                  <div className="w-16 h-16 rounded-xl bg-slate-50 border border-slate-100 p-2 flex items-center justify-center shrink-0">
+                  <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl bg-slate-50 border border-slate-100 p-2 flex items-center justify-center shrink-0">
                     {item.image ? (
                       <img
                         src={item.image}
@@ -122,7 +122,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                         }}
                       />
                     ) : (
-                      <ShoppingBag className="w-6 h-6 text-emerald-600/70" />
+                      <ShoppingBag className="w-6 h-6 text-[#46a468]/70" />
                     )}
                   </div>
 
@@ -176,7 +176,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
           {/* Drawer Footer / Checkout summary */}
           {cart.length > 0 && (
-            <div className="p-5 px-6 border-t border-slate-100 bg-slate-50/80 space-y-4">
+            <div className="p-4 sm:p-5 sm:px-6 pb-[max(1rem,env(safe-area-inset-bottom))] border-t border-slate-100 bg-slate-50/80 space-y-4">
               <div className="space-y-1.5 text-xs text-slate-600">
                 <div className="flex justify-between">
                   <span>Cart Subtotal</span>
@@ -186,7 +186,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   <span>Estimated Delivery</span>
                   <span className="font-semibold text-slate-900">
                     {deliveryFee === 0 ? (
-                      <span className="text-emerald-700 font-bold">FREE</span>
+                      <span className="text-[#378553] font-bold">FREE</span>
                     ) : (
                       `PKR ${deliveryFee}`
                     )}
@@ -194,14 +194,14 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 </div>
                 <div className="flex justify-between text-base font-black text-slate-900 pt-2 border-t border-slate-200">
                   <span>Grand Total</span>
-                  <span className="text-emerald-700 font-sans">PKR {grandTotal.toLocaleString()}</span>
+                  <span className="text-[#378553] font-sans">PKR {grandTotal.toLocaleString()}</span>
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
                 <button
                   onClick={onProceedToCheckout}
-                  className="flex-1 py-3.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm shadow-md shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-98"
+                  className="flex-1 py-3.5 rounded-full bg-[#46a468] hover:bg-[#378553] text-white font-extrabold text-sm shadow-md shadow-[#46a468]/30 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-98"
                 >
                   <span>Proceed to Checkout</span>
                   <ArrowRight className="w-4 h-4" />

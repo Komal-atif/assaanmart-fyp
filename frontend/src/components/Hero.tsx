@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { ArrowRight, Mic, Sparkles, Volume2, CheckCircle2 } from 'lucide-react';
-import { MascotAnimation } from './MascotAnimation';
+import React from 'react';
+import { ArrowRight, Mic, Truck, Wallet } from 'lucide-react';
 
 interface HeroProps {
   onOpenVoice: () => void;
@@ -8,213 +7,110 @@ interface HeroProps {
   onQuickSearch?: (query: string) => void;
 }
 
-const CYCLING_HEADLINES = [
-  {
-    main: "Fresh Vegetables",
-    sub: "Hand-picked daily from certified farms across Pakistan at honest everyday prices.",
-  },
-  {
-    main: "Big Discount",
-    sub: "Special wholesale rates on top household commodities, cooking oil, rice and pantry staples.",
-  },
-  {
-    main: "Groceries Made Easier With Your Voice",
-    sub: "Simply speak your order in Urdu or English. AssanMart builds your confirmed basket instantly.",
-  },
-];
+/** A floating leaf (pure SVG so it stays sharp on every screen). */
+const Leaf: React.FC<{ className: string; style?: React.CSSProperties }> = ({ className, style }) => (
+  <svg viewBox="0 0 64 64" className={`am-leaf pointer-events-none absolute ${className}`} style={style} aria-hidden="true">
+    <defs>
+      <linearGradient id="amLeafG" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stopColor="rgb(134,195,63)" />
+        <stop offset="1" stopColor="rgb(74,154,42)" />
+      </linearGradient>
+    </defs>
+    <path d="M8 56C8 28 26 8 56 8c0 30-18 48-48 48Z" fill="url(#amLeafG)" />
+    <path d="M10 54C24 40 36 28 52 12" stroke="#ffffff" strokeOpacity=".55" strokeWidth="2" fill="none" strokeLinecap="round" />
+  </svg>
+);
 
 export const Hero: React.FC<HeroProps> = ({ onOpenVoice, onExploreStore }) => {
-  const [index, setIndex] = useState(0);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setIndex((prev) => (prev + 1) % CYCLING_HEADLINES.length);
-    }, 3500);
-    return () => clearInterval(timer);
-  }, []);
-
-  const current = CYCLING_HEADLINES[index];
-
   return (
-    <section className="relative overflow-hidden bg-gradient-to-b from-white via-[#fcfbf9] to-white pt-6 pb-12 sm:pt-10 sm:pb-16 border-b border-[#e2ede6]">
-      {/* Subtle ambient light without green cast */}
-      <div className="absolute -top-24 -right-24 w-80 h-80 rounded-full bg-[#fbf9f5] blur-3xl pointer-events-none" />
-      <div className="absolute top-1/2 -left-20 w-72 h-72 rounded-full bg-[#ffffff] blur-3xl pointer-events-none" />
+    <section className="am-hero relative overflow-hidden bg-[#faf8f3] border-b border-[#ccfbf1]">
+      <style>{`
+        /* basket picture: fades into the page on the side that touches the text */
+        .am-hero .am-basket{
+          -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 16%,#000 94%,transparent 100%),linear-gradient(to right,transparent 0,#000 10%,#000 90%,transparent 100%);
+          -webkit-mask-composite:source-in;
+                  mask-image:linear-gradient(to bottom,transparent 0,#000 16%,#000 94%,transparent 100%),linear-gradient(to right,transparent 0,#000 10%,#000 90%,transparent 100%);
+                  mask-composite:intersect;
+        }
+        @media (min-width:1024px){
+          .am-hero .am-basket{
+            -webkit-mask-image:linear-gradient(to right,transparent 0,#000 24%,#000 94%,transparent 100%),linear-gradient(to bottom,#000 92%,transparent 100%);
+                    mask-image:linear-gradient(to right,transparent 0,#000 24%,#000 94%,transparent 100%),linear-gradient(to bottom,#000 92%,transparent 100%);
+          }
+        }
+        @keyframes am-float{0%,100%{transform:translateY(0) rotate(var(--r,0deg))}50%{transform:translateY(-14px) rotate(calc(var(--r,0deg) + 10deg))}}
+        @keyframes am-sway{0%,100%{transform:translate(0,0) rotate(var(--r,0deg))}50%{transform:translate(10px,-10px) rotate(calc(var(--r,0deg) - 14deg))}}
+        @keyframes am-rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+        @keyframes am-pop{from{opacity:0;transform:scale(.94) translateY(10px)}to{opacity:1;transform:none}}
+        @keyframes am-mic{0%{box-shadow:0 0 0 0 rgba(255,255,255,.55)}100%{box-shadow:0 0 0 12px rgba(255,255,255,0)}}
+        .am-hero .am-leaf{animation:am-float 6s ease-in-out infinite}
+        .am-hero .am-leaf.b{animation-name:am-sway;animation-duration:8s}
+        .am-hero .r1{animation:am-rise .7s ease-out both}
+        .am-hero .r2{animation:am-rise .7s .12s ease-out both}
+        .am-hero .r3{animation:am-rise .7s .24s ease-out both}
+        .am-hero .r4{animation:am-rise .7s .36s ease-out both}
+        .am-hero .pop{animation:am-pop .9s .1s ease-out both}
+        .am-hero .mic-ring{animation:am-mic 1.8s ease-out infinite}
+        @media (prefers-reduced-motion:reduce){
+          .am-hero *{animation:none!important}
+        }
+      `}</style>
 
-      <div className="max-w-[1240px] mx-auto px-4 sm:px-6 relative z-10">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-6 items-center">
-          
-          {/* Left Column: Rotating Headline Bouncing in from Side of Screen & Aligned Buttons */}
-          <div className="lg:col-span-7 text-left space-y-4">
-            
-            {/* Tag Badge */}
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#064e3b] text-white text-xs font-bold shadow-xs">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
-              <span>Smart Voice Supermarket</span>
-              <span className="text-emerald-300/80">•</span>
-              <span className="text-emerald-200">Express Delivery</span>
-            </div>
+      <div className="max-w-[1240px] mx-auto px-4 sm:px-6 grid grid-cols-1 lg:grid-cols-2 items-center gap-2 lg:gap-0">
+        {/* ---------- text + buttons ---------- */}
+        <div className="relative z-10 pt-8 pb-4 sm:pt-12 lg:py-20 text-center lg:text-left">
+          <h1 className="r1 font-black tracking-tight leading-[1.05] text-[2.4rem] sm:text-6xl lg:text-[4rem] text-[#115e59]">
+            Fresh Groceries,
+            <span className="block text-[#14b8a6]">Better Living</span>
+          </h1>
 
-            {/* Rotating Headline - Bounces in from side of screen with slide-l animation */}
-            <div className="min-h-[110px] sm:min-h-[135px] flex flex-col justify-center">
-              <h1
-                key={current.main}
-                className="slide-l text-3xl sm:text-5xl lg:text-[52px] font-black text-[#064e3b] tracking-tight leading-[1.08] font-sans"
-              >
-                {current.main}
-              </h1>
-              <p
-                key={current.sub}
-                className="slide-l text-sm sm:text-base text-[#4b6b60] mt-3 max-w-xl font-normal leading-relaxed"
-              >
-                {current.sub}
-              </p>
-            </div>
+          <div className="r2 mt-4 sm:mt-5 mx-auto lg:mx-0 h-[3px] w-40 sm:w-56 rounded-full bg-gradient-to-r from-[#0d9488] to-transparent" />
 
-            {/* Action Buttons - Strictly in a Single Horizontal Line Side-by-Side */}
-            <div
-              className="pt-4 flex flex-row items-center gap-3 sm:gap-4 flex-nowrap overflow-x-auto sm:overflow-visible pb-1 scrollbar-none"
-              style={{
-                display: 'flex',
-                flexDirection: 'row',
-                alignItems: 'center',
-                flexWrap: 'nowrap',
-                gap: '12px',
-                width: '100%',
-                maxWidth: '100%',
-              }}
+          <p className="r2 mt-4 sm:mt-5 text-[15px] sm:text-lg text-[#3f6e6a] max-w-md sm:max-w-xl mx-auto lg:mx-0 leading-relaxed">
+            Get the freshest fruits, vegetables, and daily essentials delivered to your doorstep. Just speak your order in Urdu or English.
+          </p>
+
+          {/* PRIMARY = voice order, SECONDARY = browse the store */}
+          <div className="r3 mt-6 sm:mt-8 flex flex-col sm:flex-row items-stretch sm:items-center justify-center lg:justify-start gap-3 max-w-sm sm:max-w-none mx-auto lg:mx-0">
+            <button
+              onClick={onOpenVoice}
+              className="group h-12 sm:h-[52px] px-6 sm:px-8 rounded-full bg-gradient-to-r from-[#0d9488] to-[#14b8a6] hover:from-[#0f766e] hover:to-[#0d9488] text-white font-bold text-sm sm:text-base shadow-lg shadow-teal-600/25 hover:shadow-xl hover:-translate-y-0.5 active:scale-95 transition-all flex items-center justify-center gap-2.5 cursor-pointer whitespace-nowrap"
             >
-              {/* Button 1: Browse Full Store - Solid Dark Green */}
-              <button
-                onClick={onExploreStore}
-                className="h-11 px-4 sm:px-6 rounded-full bg-[#064e3b] hover:bg-[#043d2e] text-white font-bold text-xs sm:text-sm shadow-md shadow-emerald-950/20 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 flex flex-row items-center justify-center gap-2 cursor-pointer active:scale-95 shrink-0 whitespace-nowrap group"
-                style={{
-                  display: 'inline-flex',
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                <span>Browse Full Store</span>
-                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform shrink-0" />
-              </button>
+              <span className="mic-ring w-7 h-7 rounded-full bg-white/25 flex items-center justify-center shrink-0">
+                <Mic className="w-4 h-4" />
+              </span>
+              Start Voice Order
+            </button>
 
-              {/* Button 2: Start Voice Order - Crisp White with Mint Border & Dark Green Text */}
-              <button
-                onClick={onOpenVoice}
-                className="h-11 px-4 sm:px-6 rounded-full bg-white hover:bg-[#f2faf5] text-[#064e3b] font-bold text-xs sm:text-sm border-2 border-[#10b981] hover:border-[#064e3b] shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex flex-row items-center justify-center gap-2.5 cursor-pointer active:scale-95 shrink-0 whitespace-nowrap group"
-                style={{
-                  display: 'inline-flex',
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                <div className="w-5 h-5 rounded-full bg-[#d1fae5] flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                  <Mic className="w-3.5 h-3.5 text-[#064e3b]" />
-                </div>
-                <span>Start Voice Order</span>
-              </button>
-            </div>
-
+            <button
+              onClick={onExploreStore}
+              className="group h-12 sm:h-[52px] px-6 sm:px-8 rounded-full bg-white hover:bg-[#f0fdfa] text-[#115e59] font-bold text-sm sm:text-base border-2 border-[#99f6e4] hover:border-[#14b8a6] shadow-sm hover:shadow-md hover:-translate-y-0.5 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+            >
+              Browse Full Store
+              <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </button>
           </div>
 
-          {/* Right Column: 3D Mascot inside a Perfect Circle with Animated Circular Text & Circling Badges */}
-          <div className="lg:col-span-5 flex justify-center relative py-6">
-            <div className="slide-r relative flex items-center justify-center p-4">
-              
-              {/* Circular Badge Container */}
-              <div className="relative w-64 h-64 sm:w-80 sm:h-80 flex items-center justify-center">
-                
-                {/* 1. Outermost Animated Rotating Dashed Ring */}
-                <div className="absolute -inset-6 sm:-inset-10 rounded-full border border-dashed border-emerald-300/50 pointer-events-none animate-[spin_40s_linear_infinite]" />
+          <ul className="r4 mt-6 flex flex-wrap items-center justify-center lg:justify-start gap-x-5 gap-y-2 text-xs sm:text-[13px] font-semibold text-[#3f6e6a]">
+            <li className="flex items-center gap-1.5"><Mic className="w-3.5 h-3.5 text-[#14b8a6]" /> Urdu &amp; English voice</li>
+            <li className="flex items-center gap-1.5"><Wallet className="w-3.5 h-3.5 text-[#14b8a6]" /> Cash on delivery</li>
+            <li className="flex items-center gap-1.5"><Truck className="w-3.5 h-3.5 text-[#14b8a6]" /> Free delivery over PKR 2,000</li>
+          </ul>
+        </div>
 
-                {/* 2. Middle Animated Reverse Rotating Ring with Accent Orbit Dots */}
-                <div className="absolute -inset-2 sm:-inset-4 rounded-full border border-emerald-200/40 pointer-events-none animate-[spin_30s_linear_infinite_reverse]">
-                  <span className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-emerald-500 shadow-xs" />
-                  <span className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-2 h-2 rounded-full bg-amber-400 shadow-xs" />
-                </div>
-
-                {/* 3. Inner Pulsing Glowing Ring */}
-                <div className="absolute inset-2 sm:inset-3 rounded-full border-2 border-emerald-100/70 animate-pulse-glow-ring pointer-events-none" />
-
-                {/* 4. Rotating Circular Text SVG around the circle */}
-                <svg
-                  className="absolute -inset-4 sm:-inset-6 w-[calc(100%+32px)] sm:w-[calc(100%+48px)] h-[calc(100%+32px)] sm:h-[calc(100%+48px)] animate-spin-slow pointer-events-none select-none"
-                  viewBox="0 0 320 320"
-                >
-                  <defs>
-                    <path
-                      id="textCirclePath"
-                      d="M 160, 160 m -130, 0 a 130,130 0 1,1 260,0 a 130,130 0 1,1 -260,0"
-                    />
-                  </defs>
-                  <text className="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-[3.8px] fill-[#064e3b]/70">
-                    <textPath href="#textCirclePath" startOffset="0%">
-                      ASSANMART · SMART VOICE GROCERIES · URDU &amp; ENGLISH · ORDER IN SECONDS · 
-                    </textPath>
-                  </text>
-                </svg>
-
-                {/* 5. Perfect Center Circle Housing the 3D Mascot */}
-                <div className="w-48 h-48 sm:w-60 sm:h-60 rounded-full bg-gradient-to-b from-white via-[#fcfbf9] to-[#f4fbf6] border-4 border-emerald-100 shadow-2xl overflow-hidden p-3 flex items-center justify-center relative z-20 transition-transform duration-300 hover:scale-105">
-                  <MascotAnimation className="w-full h-full" />
-                </div>
-
-                {/* 6. Circling Small Voice Automation Cards */}
-                {/* Card 1: Top Left */}
-                <div className="absolute -top-3 -left-6 sm:-left-12 z-30 animate-float-badge-1 bg-white/95 backdrop-blur-md px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-2xl border border-emerald-100/90 shadow-lg shadow-emerald-950/5 flex items-center gap-2 hover:scale-105 transition-transform select-none">
-                  <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-emerald-100 text-[#064e3b] flex items-center justify-center shrink-0">
-                    <Mic className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#059669]" />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-[10px] sm:text-[11px] font-bold text-[#064e3b] leading-tight">Urdu &amp; English Voice</p>
-                    <p className="text-[8px] sm:text-[9px] text-[#4b6b60]">"2 kilo aalo aur doodh"</p>
-                  </div>
-                </div>
-
-                {/* Card 2: Top Right */}
-                <div className="absolute -top-2 -right-6 sm:-right-12 z-30 animate-float-badge-2 bg-white/95 backdrop-blur-md px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-2xl border border-emerald-100/90 shadow-lg shadow-emerald-950/5 flex items-center gap-2 hover:scale-105 transition-transform select-none">
-                  <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
-                    <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-600" />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-[10px] sm:text-[11px] font-bold text-[#064e3b] leading-tight">Instant Smart Cart</p>
-                    <p className="text-[8px] sm:text-[9px] text-[#4b6b60]">Auto-detects items &amp; sizes</p>
-                  </div>
-                </div>
-
-                {/* Card 3: Bottom Right */}
-                <div className="absolute -bottom-3 -right-4 sm:-right-10 z-30 animate-float-badge-1 bg-white/95 backdrop-blur-md px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-2xl border border-emerald-100/90 shadow-lg shadow-emerald-950/5 flex items-center gap-2 hover:scale-105 transition-transform select-none">
-                  <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-emerald-50 border border-emerald-200 text-[#064e3b] flex items-center justify-center shrink-0">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-[10px] sm:text-[11px] font-bold text-[#064e3b] leading-tight">Hands-Free Order</p>
-                    <p className="text-[8px] sm:text-[9px] text-[#4b6b60]">Confirm with 1 spoken word</p>
-                  </div>
-                </div>
-
-                {/* Card 4: Bottom Left */}
-                <div className="absolute -bottom-3 -left-4 sm:-left-10 z-30 animate-float-badge-3 bg-white/95 backdrop-blur-md px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-2xl border border-[#ede6da] shadow-lg shadow-emerald-950/5 flex items-center gap-2 hover:scale-105 transition-transform select-none">
-                  <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-[#fbf8f2] border border-[#e5dacf] flex items-center justify-center shrink-0">
-                    <Volume2 className="w-3.5 h-3.5 text-[#064e3b]" />
-                  </div>
-                  <div className="text-left">
-                    <p className="text-[10px] sm:text-[11px] font-bold text-[#064e3b] leading-tight">Voice Automation</p>
-                    <p className="text-[8px] sm:text-[9px] text-[#4b6b60]">Zero typing needed</p>
-                  </div>
-                </div>
-
-              </div>
-
-            </div>
-          </div>
-
+        {/* ---------- basket + leaves ---------- */}
+        <div className="relative pop flex justify-center lg:justify-end">
+          <Leaf className="w-9 sm:w-12 left-[6%] top-[10%]" style={{ ['--r' as any]: '-20deg' }} />
+          <Leaf className="b w-7 sm:w-9 left-[2%] bottom-[24%]" style={{ ['--r' as any]: '30deg', animationDelay: '-2s' }} />
+          <Leaf className="w-8 sm:w-10 right-[4%] top-[4%]" style={{ ['--r' as any]: '55deg', animationDelay: '-4s' }} />
+          <img
+            src="/images/hero-basket.jpg"
+            alt="A basket of fresh fruit, vegetables, milk and bread"
+            width={770}
+            height={800}
+            className="am-basket w-full max-w-[420px] sm:max-w-[520px] lg:max-w-none lg:w-[110%] lg:-mr-6 h-auto select-none"
+            draggable={false}
+          />
         </div>
       </div>
     </section>

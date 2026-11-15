@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { AnimatedLogo } from './AnimatedLogo';
 import { X, User as UserIcon, Phone, Lock, ArrowRight, Loader2, MapPin, LocateFixed, Mic, MicOff } from 'lucide-react';
 import { User } from '../types';
 import { supabase } from '../supabaseClient';
@@ -417,18 +418,38 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
   };
 
   const input =
-    'w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:border-emerald-500 focus:outline-hidden disabled:opacity-60';
+    'w-full pl-9 pr-3 py-2 bg-[#f3fbf6] border border-[#b3e4c4] rounded-xl text-xs text-[#1f5233] focus:bg-white focus:border-[#1daa61] focus:ring-2 focus:ring-[#1daa61]/15 focus:outline-hidden disabled:opacity-60';
+
+  const passwordField = (
+      <div>
+        <label className="text-xs font-bold text-[#2a6b43] block mb-1">Password {tab === 'signup' && <span className="font-normal text-[#7fa28d]">(6+ characters)</span>}</label>
+        <div className="relative">
+          <Lock className="w-4 h-4 text-[#7fa28d] absolute left-3 top-3" />
+          <input
+            ref={passRef}
+            type="password"
+            required
+            minLength={6}
+            placeholder="••••••••"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={loading}
+            className={input}
+          />
+        </div>
+      </div>
+  );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden max-h-[94vh] overflow-y-auto">
-        <div className="p-6 pb-0 flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/60 backdrop-blur-xs animate-in fade-in duration-200">
+      <div className="relative w-full max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-[#e0f4e7] overflow-hidden max-h-[94dvh] sm:max-h-[92vh] overflow-y-auto">
+        <div className="p-5 sm:p-6 pb-0 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-emerald-50 border border-emerald-100 p-1 flex items-center justify-center">
-              <img src="/mascot.png" alt="AssanMart" className="w-full h-full object-contain" />
+            <div className="w-8 h-8 rounded-xl bg-[#f3fbf6] border border-[#e0f4e7] p-1 flex items-center justify-center">
+              <AnimatedLogo className="w-full h-full" />
             </div>
-            <span className="font-extrabold text-slate-900 text-lg">
-              Assan<span className="text-emerald-600">Mart</span>
+            <span className="font-extrabold text-[#1f5233] text-lg">
+              Assan<span className="text-[#148a4c]">Mart</span>
             </span>
           </div>
           <button
@@ -437,15 +458,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
               onClose();
             }}
             disabled={loading}
-            className="w-8 h-8 rounded-full hover:bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer disabled:opacity-50"
+            className="w-8 h-8 rounded-full hover:bg-[#e0f4e7] text-[#4d7a5c] hover:text-[#1f5233] flex items-center justify-center transition-colors cursor-pointer disabled:opacity-50"
             aria-label="Close"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="px-6 pt-4">
-          <div className="flex bg-slate-100 p-1 rounded-xl">
+        <div className="px-5 sm:px-6 pt-4">
+          <div className="flex bg-[#e0f4e7] p-1 rounded-xl">
             {(['login', 'signup'] as const).map((t) => (
               <button
                 key={t}
@@ -453,7 +474,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
                 disabled={loading}
                 onClick={() => switchTab(t)}
                 className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                  tab === t ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-900'
+                  tab === t ? 'bg-white text-[#1f5233] shadow-xs' : 'text-[#4d7a5c] hover:text-[#1f5233]'
                 }`}
               >
                 {t === 'login' ? 'Sign In' : 'Create Account'}
@@ -462,10 +483,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
           </div>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-5 sm:p-6 space-y-4">
           <div>
-            <h3 className="text-xl font-black text-slate-900">{tab === 'login' ? 'Welcome Back!' : 'Join AssanMart'}</h3>
-            <p className="text-xs text-slate-500 mt-1">
+            <h3 className="text-xl font-black text-[#1f5233]">{tab === 'login' ? 'Welcome Back!' : 'Join AssanMart'}</h3>
+            <p className="text-xs text-[#4d7a5c] mt-1">
               {tab === 'login' ? 'Sign in with your phone number and password.' : 'Create an account with your phone number. No email needed.'}
             </p>
           </div>
@@ -475,7 +496,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
             type="button"
             onClick={googleSignIn}
             disabled={loading}
-            className="w-full py-2.5 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+            className="w-full py-2.5 rounded-full border border-[#b3e4c4] bg-white hover:bg-[#f3fbf6] text-[#1f5233] font-bold text-xs flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
           >
             <svg className="w-4 h-4" viewBox="0 0 48 48" aria-hidden="true">
               <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z" />
@@ -486,19 +507,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
             Continue with Google
           </button>
 
-          <div className="flex items-center gap-3 text-[11px] text-slate-400">
-            <span className="h-px flex-1 bg-slate-200" /> or with your phone number <span className="h-px flex-1 bg-slate-200" />
+          <div className="flex items-center gap-3 text-[11px] text-[#7fa28d]">
+            <span className="h-px flex-1 bg-[#e0f4e7]" /> or with your phone number <span className="h-px flex-1 bg-[#e0f4e7]" />
           </div>
 
           {/* voice helper (on by default, like in the photo scanner) */}
           {(
-            <div className="rounded-2xl border border-emerald-100 bg-emerald-50/50 p-3">
+            <div className="rounded-2xl border border-[#e0f4e7] bg-[#f3fbf6]/50 p-3">
               <button
                 type="button"
                 onClick={voiceOn ? stopVoice : () => startVoice(tab === 'signup' ? 'name' : 'loginphone')}
                 disabled={loading}
                 className={`w-full py-2 rounded-full text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors ${
-                  voiceOn ? 'bg-slate-200 text-slate-700' : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                  voiceOn ? 'bg-[#e0f4e7] text-[#2a6b43] ring-1 ring-[#b3e4c4]' : 'bg-[#1daa61] hover:bg-[#148a4c] text-white'
                 } ${vPhase === 'listening' ? 'animate-pulse' : ''}`}
               >
                 {voiceOn ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
@@ -510,25 +531,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
                     : 'Tap to stop voice'
                   : 'Voice off — tap to fill this form by voice'}
               </button>
-              {voiceOn && agentText && <p className="text-[11px] text-emerald-900 mt-2 leading-snug" dir="auto">{agentText}</p>}
+              {voiceOn && agentText && <p className="text-[11px] text-[#1f5233] mt-2 leading-snug" dir="auto">{agentText}</p>}
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-3">
             {tab === 'signup' && (
               <div>
-                <label className="text-xs font-bold text-slate-600 block mb-1">Full Name</label>
+                <label className="text-xs font-bold text-[#2a6b43] block mb-1">Full Name</label>
                 <div className="relative">
-                  <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <UserIcon className="w-4 h-4 text-[#7fa28d] absolute left-3 top-3" />
                   <input type="text" placeholder="Enter your name" value={name} onChange={(e) => setName(e.target.value)} disabled={loading} className={input} />
                 </div>
               </div>
             )}
 
             <div>
-              <label className="text-xs font-bold text-slate-600 block mb-1">Phone Number</label>
+              <label className="text-xs font-bold text-[#2a6b43] block mb-1">Phone Number</label>
               <div className="relative">
-                <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                <Phone className="w-4 h-4 text-[#7fa28d] absolute left-3 top-3" />
                 <input
                   type={tab === 'login' ? 'text' : 'tel'}
                   inputMode={tab === 'login' ? 'text' : 'tel'}
@@ -542,31 +563,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
               </div>
             </div>
 
-            <div>
-              <label className="text-xs font-bold text-slate-600 block mb-1">Password {tab === 'signup' && <span className="font-normal text-slate-400">(6+ characters)</span>}</label>
-              <div className="relative">
-                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-                <input
-                  ref={passRef}
-                  type="password"
-                  required
-                  minLength={6}
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={loading}
-                  className={input}
-                />
-              </div>
-            </div>
+            {tab === 'login' && passwordField}
 
             {tab === 'signup' && (
               <div>
-                <label className="text-xs font-bold text-slate-600 block mb-1">
-                  Delivery Address <span className="font-normal text-slate-400">(optional)</span>
+                <label className="text-xs font-bold text-[#2a6b43] block mb-1">
+                  Delivery Address
                 </label>
                 <div className="relative">
-                  <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <MapPin className="w-4 h-4 text-[#7fa28d] absolute left-3 top-3" />
                   <input
                     type="text"
                     placeholder="House, street, area"
@@ -580,7 +585,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
                   type="button"
                   onClick={useMyLocation}
                   disabled={locating || loading}
-                  className="mt-2 px-3 py-1.5 rounded-full border border-emerald-300 bg-emerald-50 text-emerald-800 text-[11px] font-bold flex items-center gap-1.5 hover:bg-emerald-100 cursor-pointer disabled:opacity-60"
+                  className="mt-2 px-3 py-1.5 rounded-full border border-[#96d9ae] bg-[#f3fbf6] text-[#2a6b43] text-[11px] font-bold flex items-center gap-1.5 hover:bg-[#e0f4e7] cursor-pointer disabled:opacity-60"
                 >
                   {locating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LocateFixed className="w-3.5 h-3.5" />}
                   {locating ? 'Finding you…' : 'Use my current location'}
@@ -588,13 +593,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
               </div>
             )}
 
+            {tab === 'signup' && passwordField}
+
             {error && <p className="text-xs font-semibold text-red-600">{error}</p>}
-            {message && <p className="text-xs font-semibold text-emerald-600">{message}</p>}
+            {message && <p className="text-xs font-semibold text-[#148a4c]">{message}</p>}
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 rounded-full bg-slate-900 hover:bg-emerald-600 text-white font-extrabold text-xs shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-98 disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full py-3 rounded-full bg-gradient-to-r from-[#1daa61] to-[#3fc27b] hover:from-[#148a4c] hover:to-[#1daa61] text-white font-extrabold text-xs shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-98 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {loading ? (
                 <>

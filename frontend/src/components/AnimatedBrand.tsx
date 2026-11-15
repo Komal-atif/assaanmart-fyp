@@ -5,7 +5,7 @@ import { AnimatedLogo } from './AnimatedLogo';
  * Header brand intro: dots spiral in -> ring pulse -> logo pops -> "AssanMart" types out.
  * It plays once on load and again every time `playKey` changes
  * (App bumps it when the page changes or a modal closes), then stays as the normal logo.
- * Theme colours: #064e3b, #059669, #10b981, amber #f59e0b. Honors "reduce motion".
+ * Theme colours: #1daa61, #3fc27b, #7fcf9a, amber #f59e0b. Honors "reduce motion".
  */
 interface AnimatedBrandProps {
   playKey?: number | string;
@@ -19,8 +19,8 @@ export const AnimatedBrand: React.FC<AnimatedBrandProps> = ({ playKey = 0 }) => 
       .amb .ring{animation:amb-ring 3.6s ease-out 1 both;opacity:0}
       .amb .orbit{animation:amb-orbit 3.6s cubic-bezier(.5,0,.3,1) 1 both;opacity:0}
       .amb .dot{position:absolute;left:-4px;top:-4px;width:8px;height:8px;border-radius:9999px;animation:amb-dot 3.6s cubic-bezier(.5,0,.3,1) 1 both}
-      .amb .d1{--a:0deg;background:#064e3b}
-      .amb .d2{--a:120deg;background:#10b981}
+      .amb .d1{--a:0deg;background:#1daa61}
+      .amb .d2{--a:120deg;background:#7fcf9a}
       .amb .d3{--a:240deg;background:#f59e0b}
       @keyframes amb-orbit{
         0%{opacity:0;transform:rotate(0)}
@@ -61,7 +61,7 @@ export const AnimatedBrand: React.FC<AnimatedBrandProps> = ({ playKey = 0 }) => 
         <AnimatedLogo className="w-[74%] h-[74%]" />
       </span>
       {/* pulse ring */}
-      <span className="ring pointer-events-none absolute inset-0 rounded-full border-2 border-[#10b981]" />
+      <span className="ring pointer-events-none absolute inset-0 rounded-full border-2 border-[#7fcf9a]" />
       {/* three dots spiralling into the logo */}
       <span className="orbit pointer-events-none absolute left-1/2 top-1/2 w-0 h-0">
         <span className="dot d1" /><span className="dot d2" /><span className="dot d3" />
@@ -69,8 +69,8 @@ export const AnimatedBrand: React.FC<AnimatedBrandProps> = ({ playKey = 0 }) => 
     </span>
 
     {/* wordmark types out */}
-    <span className="word text-lg font-black tracking-tight text-[#064e3b] whitespace-nowrap">
-      Assan<span className="text-[#059669]">Mart</span>
+    <span className="word text-lg font-black tracking-tight text-[#2a6b43] whitespace-nowrap">
+      Assan<span className="text-[#1DAA61]">Mart</span>
     </span>
   </span>
 );

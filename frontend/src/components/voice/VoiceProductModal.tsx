@@ -1,293 +1,122 @@
-import React, { useState, useEffect } from 'react';
-import { X, Check, Volume2, ShoppingBag } from 'lucide-react';
-import { VoiceOptions, VoiceOptionItem } from '../../services/voiceApi';
-import { VoicePhase } from './VoiceAvatar';
+import React, { useEffect, useMemo, useState } from 'react';
+import { X, ChevronRight, SkipForward, Mic, Volume2 } from 'lucide-react';
 
-interface VoiceProductModalProps {
-  options: VoiceOptions | null;
-  phase: VoicePhase;
+/* The selection pop-up: brands, types, sizes and quantity are chosen here (tap), or just by speaking.
+   It opens by itself whenever the agent offers choices and closes when the choice is made. */
+
+interface Props {
+  options: any | null;                       // VoiceOptions from the server
+  phase: 'listening' | 'speaking' | 'thinking' | 'off' | string;
   onSelect: (value: string, qty?: number | null) => void;
 }
 
-const STEPS = ['Brand', 'Product', 'Quantity'];
-const STEP_OF: Record<string, number> = { brand: 0, type: 1, variant: 1, quantity: 2 };
+const money = (n?: number, t?: string) => (t ? t : typeof n === 'number' ? `Rs. ${Math.round(n).toLocaleString()}` : '');
 
-const STATUS_TEXT: Record<VoicePhase, string> = {
-  listening: 'Listening — say a brand, "next" or "cheapest"',
-  speaking: 'Reading available choices aloud…',
-  thinking: 'Processing your selection…',
-  off: 'Microphone is paused — you can still tap directly',
-};
+export const VoiceProductModal: React.FC<Props> = ({ options, phase, onSelect }) => {
+  const [hidden, setHidden] = useState(false);
+  const items: any[] = useMemo(() => options?.items ?? [], [options]);
+  const isQty = options?.stage === 'quantity';
+  const key = useMemo(() => JSON.stringify([options?.stage, options?.title, items.map((i) => i.value)]), [options, items]);
 
-export const VoiceProductModal: React.FC<VoiceProductModalProps> = ({
-  options,
-  phase,
-  onSelect,
-}) => {
-  const [qty, setQty] = useState(1);
-  const [dismissed, setDismissed] = useState(false);
+  // a new set of choices always opens the pop-up again
+  useEffect(() => setHidden(false), [key]);
 
-  // Every new question re-opens the pop-up
-  useEffect(() => {
-    setDismissed(false);
-    setQty(1);
-  }, [options]);
+  const show = !!options && (items.length > 0 || isQty) && !hidden;
+  if (!show) return null;
 
-  useEffect(() => {
-    if (!options || dismissed) return undefined;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setDismissed(true);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [options, dismissed]);
-
-  if (!options || dismissed) return null;
-
-  const {
-    stage,
-    title,
-    items = [],
-    product,
-    next_value: nextValue,
-    total,
-    paged,
-    up_next: upNext = [],
-  } = options;
-  const step = STEP_OF[stage] ?? 0;
-  const isSpeaking = phase === 'speaking';
+  const suggested = options?.suggested_qty ?? 1;
+  const product = options?.product;
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-200"
-      onClick={() => setDismissed(true)}
-    >
-      <div
-        className="w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-emerald-100 flex flex-col max-h-[85vh] overflow-hidden animate-in zoom-in-95 duration-200"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-      >
-        {/* Header */}
-        <header className="px-5 py-4 border-b border-emerald-100 flex items-start justify-between bg-emerald-50/40">
-          <div>
-            {/* Step Indicators */}
-            <ol className="flex items-center gap-3 mb-1.5 text-xs font-bold text-slate-400">
-              {STEPS.map((s, idx) => (
-                <li
-                  key={s}
-                  className={`flex items-center gap-1.5 ${
-                    idx === step
-                      ? 'text-[#064e3b]'
-                      : idx < step
-                      ? 'text-emerald-600'
-                      : 'text-slate-400'
-                  }`}
-                >
-                  <span
-                    className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                      idx === step
-                        ? 'bg-[#064e3b] text-white'
-                        : idx < step
-                        ? 'bg-emerald-200 text-[#064e3b]'
-                        : 'border border-slate-300'
-                    }`}
-                  >
-                    {idx < step ? '✓' : idx + 1}
-                  </span>
-                  <span>{s}</span>
-                </li>
-              ))}
-            </ol>
-
-            <h2 className="text-lg font-bold text-[#064e3b] capitalize">{title}</h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {stage === 'brand' && `${total || items.length} brands available — tap or speak one`}
-              {stage === 'type' && 'Choose which type you need'}
-              {stage === 'variant' && `${total || items.length} variants — tap or speak size/name`}
-              {stage === 'quantity' && 'How many packs would you like?'}
-            </p>
-            {upNext.length > 0 && (
-              <span className="inline-block mt-1 text-[11px] px-2 py-0.5 bg-emerald-100 text-[#064e3b] font-medium rounded-full">
-                Then: {upNext.join(', ')}
-              </span>
-            )}
+    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-6 bg-[#0b2a18]/45 backdrop-blur-[2px] animate-[vpm-fade_.2s_ease-out]">
+      <div className="relative w-full sm:max-w-3xl max-h-[88vh] flex flex-col rounded-t-3xl sm:rounded-3xl bg-gradient-to-b from-white to-[#f3fbf6] border border-[#b3e4c4] shadow-[0_30px_80px_-20px_rgba(20,138,76,.55)] animate-[vpm-pop_.35s_cubic-bezier(.3,1.3,.5,1)]">
+        {/* header */}
+        <div className="flex items-start gap-3 px-5 pt-5 pb-3">
+          <span className="w-10 h-10 shrink-0 rounded-xl bg-[#1DAA61] text-white flex items-center justify-center shadow">
+            {phase === 'speaking' ? <Volume2 className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <h3 className="text-lg font-black text-[#1f5233] leading-tight" dir="auto">
+              {options?.title || (isQty ? 'How many?' : 'Choose one')}
+            </h3>
+            <p className="text-xs text-[#4d7a5c] mt-0.5">Tap an option or say it out loud</p>
           </div>
-
-          <button
-            type="button"
-            onClick={() => setDismissed(true)}
-            className="w-8 h-8 rounded-full bg-white hover:bg-emerald-100 text-slate-500 hover:text-emerald-900 border border-emerald-200 flex items-center justify-center cursor-pointer transition-colors"
-          >
+          <button onClick={() => setHidden(true)} aria-label="Hide choices" className="w-8 h-8 shrink-0 rounded-full bg-white border border-[#b3e4c4] text-[#2a6b43] hover:bg-[#e0f4e7] flex items-center justify-center cursor-pointer">
             <X className="w-4 h-4" />
           </button>
-        </header>
+        </div>
 
-        {/* Content Body */}
-        <div className="p-5 overflow-y-auto flex-1">
-          {/* Stage: Brand or Type List */}
-          {(stage === 'brand' || stage === 'type') && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {items.map((b) => (
-                <button
-                  key={b.value}
-                  type="button"
-                  onClick={() => onSelect(b.value)}
-                  className={`flex items-center gap-2.5 p-3 rounded-2xl border text-left transition-all cursor-pointer ${
-                    b.spoken
-                      ? 'border-emerald-500 bg-emerald-50 shadow-sm ring-2 ring-emerald-200'
-                      : 'border-slate-200 hover:border-emerald-300 bg-white hover:bg-emerald-50/50'
-                  }`}
-                >
-                  <span className="w-8 h-8 rounded-full bg-emerald-100 text-[#064e3b] font-extrabold flex items-center justify-center shrink-0 text-xs">
-                    {String(b.label).slice(0, 1).toUpperCase()}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <span className="text-xs font-bold text-slate-800 block truncate">
-                      {b.label}
-                    </span>
-                    {b.spoken && isSpeaking && (
-                      <span className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1">
-                        <Volume2 className="w-3 h-3 animate-pulse" />
-                        Speaking
-                      </span>
-                    )}
+        <div className="overflow-y-auto px-5 pb-5">
+          {isQty ? (
+            <div className="flex flex-col items-center gap-4 py-2">
+              {product && (
+                <div className="flex items-center gap-3 w-full max-w-md rounded-2xl bg-white border border-[#b3e4c4] p-3">
+                  <div className="w-20 h-20 rounded-xl bg-[#f3fbf6] flex items-center justify-center overflow-hidden shrink-0">
+                    {product.image_url ? <img src={product.image_url} alt="" className="max-h-full max-w-full object-contain mix-blend-multiply" /> : <span className="text-3xl">🛒</span>}
                   </div>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Stage: Variant Cards */}
-          {stage === 'variant' && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {items.map((v) => (
-                <button
-                  key={v.id || v.value}
-                  type="button"
-                  onClick={() => onSelect(v.value)}
-                  className={`flex flex-col p-3 rounded-2xl border text-left transition-all cursor-pointer relative group ${
-                    v.spoken
-                      ? 'border-emerald-500 bg-emerald-50 shadow-md ring-2 ring-emerald-200'
-                      : 'border-slate-200 hover:border-emerald-300 bg-white hover:shadow-xs'
-                  }`}
-                >
-                  {/* Image container */}
-                  <div className="w-full aspect-4/3 rounded-xl bg-white border border-slate-100 p-2 flex items-center justify-center overflow-hidden mb-2">
-                    {v.image_url ? (
-                      <img
-                        src={v.image_url}
-                        alt={v.name || v.label}
-                        className="w-full h-full object-contain group-hover:scale-105 transition-transform"
-                      />
-                    ) : (
-                      <ShoppingBag className="w-8 h-8 text-emerald-300" />
-                    )}
+                  <div className="min-w-0 text-left">
+                    <p className="font-extrabold text-[#1f5233] leading-tight line-clamp-2" dir="auto">{product.label || product.name}</p>
+                    <p className="text-sm text-[#4d7a5c] mt-1">{[product.size, money(product.price ?? product.unit_price, product.price_text)].filter(Boolean).join(' · ')}</p>
                   </div>
-
-                  {v.spoken && isSpeaking && (
-                    <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-amber-400 text-amber-950 font-bold text-[10px] flex items-center gap-1 shadow-xs">
-                      <Volume2 className="w-2.5 h-2.5 animate-pulse" />
-                      Reading
-                    </span>
-                  )}
-
-                  <span className="text-xs font-bold text-slate-800 line-clamp-2 min-h-[32px]">
-                    {v.label}
-                  </span>
-
-                  <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-slate-100">
-                    <span className="text-[11px] text-slate-500">{v.size || 'Pack'}</span>
-                    <span className="text-xs font-extrabold text-[#064e3b]">
-                      {v.price_text || `Rs. ${v.price}`}
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Stage: Quantity */}
-          {stage === 'quantity' && product && (
-            <div className="flex flex-col sm:flex-row items-center gap-6 p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100">
-              <div className="w-32 h-32 rounded-2xl bg-white border border-emerald-200 p-2 flex items-center justify-center shrink-0">
-                {product.image_url ? (
-                  <img
-                    src={product.image_url}
-                    alt={product.name || product.label}
-                    className="w-full h-full object-contain"
-                  />
-                ) : (
-                  <ShoppingBag className="w-12 h-12 text-emerald-400" />
-                )}
-              </div>
-
-              <div className="flex-1 text-center sm:text-left">
-                <h3 className="text-base font-bold text-[#064e3b]">
-                  {product.name || product.label}
-                </h3>
-                <p className="text-xs text-slate-500 mt-1">{product.size}</p>
-                <p className="text-sm font-extrabold text-emerald-800 mt-0.5">
-                  {product.price_text || `Rs. ${product.price}`} each
-                </p>
-
-                {/* Quantity Stepper */}
-                <div className="mt-4 flex items-center gap-3 justify-center sm:justify-start">
-                  <div className="inline-flex items-center border border-emerald-300 rounded-full bg-white p-1">
-                    <button
-                      type="button"
-                      onClick={() => setQty(Math.max(1, qty - 1))}
-                      className="w-8 h-8 rounded-full bg-emerald-100 text-[#064e3b] font-bold text-sm flex items-center justify-center hover:bg-emerald-200"
-                    >
-                      −
-                    </button>
-                    <span className="px-4 text-sm font-extrabold text-slate-800">{qty}</span>
-                    <button
-                      type="button"
-                      onClick={() => setQty(Math.min(100, qty + 1))}
-                      className="w-8 h-8 rounded-full bg-emerald-100 text-[#064e3b] font-bold text-sm flex items-center justify-center hover:bg-emerald-200"
-                    >
-                      +
-                    </button>
-                  </div>
-
-                  <span className="text-xs text-slate-600">
-                    Total: <strong className="text-slate-900 text-sm">Rs. {Math.round((product.price || 0) * qty)}</strong>
-                  </span>
                 </div>
+              )}
+              <button
+                onClick={() => onSelect('', suggested)}
+                className="px-6 py-3 rounded-full bg-[#1DAA61] hover:bg-[#148a4c] text-white font-extrabold flex items-center gap-2 shadow-lg active:scale-95 transition cursor-pointer"
+              >
+                Keep {suggested} &amp; go to next item <SkipForward className="w-4 h-4" />
+              </button>
+              <div className="flex flex-wrap justify-center gap-2">
+                {(items.length ? items : [1, 2, 3, 4, 5, 6].map((n) => ({ label: String(n), value: '', qty: n }))).map((it: any, i: number) => (
+                  <button
+                    key={`${it.value}-${i}`}
+                    onClick={() => onSelect(it.value, it.qty ?? null)}
+                    className="min-w-12 px-4 py-2 rounded-full bg-white border border-[#b3e4c4] text-sm font-extrabold text-[#2a6b43] hover:bg-[#1DAA61] hover:text-white hover:border-[#1DAA61] transition-colors cursor-pointer"
+                  >
+                    {it.label}
+                  </button>
+                ))}
               </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {items.map((it: any, i: number) => (
+                <button
+                  key={`${it.value}-${i}`}
+                  onClick={() => onSelect(it.value)}
+                  style={{ animationDelay: `${i * 50}ms` }}
+                  className="vpm-card group relative text-left rounded-2xl bg-white border border-[#b3e4c4] hover:border-[#1DAA61] hover:-translate-y-1 hover:shadow-xl p-3 transition-all cursor-pointer"
+                >
+                  <span className="absolute top-2 left-2 z-[1] w-6 h-6 rounded-full bg-[#1DAA61] text-white text-xs font-black flex items-center justify-center shadow">{i + 1}</span>
+                  <div className="h-24 sm:h-28 rounded-xl bg-[#f3fbf6] flex items-center justify-center overflow-hidden">
+                    {it.image_url ? (
+                      <img src={it.image_url} alt="" loading="lazy" className="max-h-full max-w-full object-contain mix-blend-multiply group-hover:scale-105 transition-transform" />
+                    ) : (
+                      <span className="text-4xl">🛒</span>
+                    )}
+                  </div>
+                  <p className="mt-2 text-[13px] font-extrabold text-[#1f5233] leading-tight line-clamp-2" dir="auto">{it.label || it.name}</p>
+                  {(it.size || it.price_text || it.price != null) && (
+                    <p className="mt-1 text-xs text-[#4d7a5c]">{[it.size, money(it.price, it.price_text)].filter(Boolean).join(' · ')}</p>
+                  )}
+                </button>
+              ))}
+              {options?.next_value && (
+                <button onClick={() => onSelect(options.next_value)} className="rounded-2xl border-2 border-dashed border-[#96d9ae] text-[#2a6b43] text-sm font-bold flex flex-col items-center justify-center gap-1 min-h-32 hover:bg-white cursor-pointer">
+                  More <ChevronRight className="w-5 h-5" />
+                </button>
+              )}
             </div>
           )}
         </div>
-
-        {/* Footer */}
-        <footer className="px-5 py-3.5 border-t border-emerald-100 flex items-center justify-between bg-slate-50/60">
-          <div className="flex items-center gap-2 text-xs text-slate-600 font-medium">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>{STATUS_TEXT[phase]}</span>
-          </div>
-
-          <div>
-            {stage === 'quantity' ? (
-              <button
-                type="button"
-                onClick={() => onSelect('', qty)}
-                className="h-10 px-6 rounded-full bg-[#064e3b] hover:bg-[#065f46] text-white text-xs font-bold transition-all shadow-md active:scale-95"
-              >
-                Add to Basket
-              </button>
-            ) : nextValue ? (
-              <button
-                type="button"
-                onClick={() => onSelect(nextValue)}
-                className="h-9 px-4 rounded-full bg-emerald-100 hover:bg-emerald-200 text-[#064e3b] text-xs font-bold transition-colors"
-              >
-                Next Choices →
-              </button>
-            ) : null}
-          </div>
-        </footer>
       </div>
+      <style>{`
+        @keyframes vpm-fade{from{opacity:0}to{opacity:1}}
+        @keyframes vpm-pop{from{opacity:0;transform:translateY(24px) scale(.97)}to{opacity:1;transform:none}}
+        @keyframes vpm-card{from{opacity:0;transform:translateY(12px) scale(.96)}to{opacity:1;transform:none}}
+        .vpm-card{animation:vpm-card .4s cubic-bezier(.3,1.4,.5,1) both}
+        @media (prefers-reduced-motion:reduce){.vpm-card{animation:none}}
+      `}</style>
     </div>
   );
 };
