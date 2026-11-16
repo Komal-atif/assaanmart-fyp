@@ -3196,6 +3196,15 @@ async def stt_raw(audio_path: str, content_type: str, cur: str, chosen: bool):
     the slower call is not waited for. -> (en_text, en_conf, ur_text, ur_conf)"""
     with open(audio_path, "rb") as f:
         audio_data = f.read()
+    # the real container decides, not the label the browser put on it (iPhone sends mp4, Chrome sends webm)
+    if audio_data[:4] == b"\x1aE\xdf\xa3":
+        content_type = "audio/webm"
+    elif audio_data[4:8] == b"ftyp":
+        content_type = "audio/mp4"
+    elif audio_data[:4] == b"OggS":
+        content_type = "audio/ogg"
+    elif audio_data[:4] == b"RIFF":
+        content_type = "audio/wav"
     t_en = asyncio.create_task(asyncio.to_thread(_deepgram_call, audio_data, "en", content_type))
     t_ur = asyncio.create_task(asyncio.to_thread(_deepgram_call, audio_data, "ur", content_type))
     first, other = (t_en, t_ur) if cur == "english" else (t_ur, t_en)
@@ -3490,8 +3499,14 @@ async def _urdu_tts_bytes(text: str):
     return None
 
 
+def _is_apple_safari(ua: str) -> bool:
+    ua = (ua or "").lower()
+    return ("iphone" in ua or "ipad" in ua or "ipod" in ua
+            or ("safari" in ua and "chrome" not in ua and "chromium" not in ua and "android" not in ua))
+
+
 @app.get("/tts/{tid}")
-async def tts_stream(tid: str):
+async def tts_stream(tid: str, request: Request):
     job = TTS_JOBS.get(tid)
     if not job:
         return Response(status_code=404)
@@ -3499,6 +3514,31 @@ async def tts_stream(tid: str):
         await asyncio.sleep(0.01)
     if not job.chunks:
         return Response(status_code=502)
+
+    if _is_apple_safari(request.headers.get("user-agent", "")):
+        # iPhone/Safari will not play a chunked stream: it needs the full file with a Content-Length and Range (206) support
+        waited = 0.0
+        while not job.done and waited < 30:
+            await asyncio.sleep(0.02)
+            waited += 0.02
+        data = b"".join(job.chunks)
+        size = len(data)
+        hdr = {"Accept-Ranges": "bytes", "Cache-Control": "no-store"}
+        rng = request.headers.get("range")
+        m = re.match(r"bytes=(\d*)-(\d*)", rng or "")
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                start = int(m.group(1))
+                end = int(m.group(2)) if m.group(2) else size - 1
+            else:                                   # "bytes=-N" = the last N bytes
+                start = max(0, size - int(m.group(2)))
+                end = size - 1
+            end = min(end, size - 1)
+            if start >= size:
+                return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+            hdr["Content-Range"] = f"bytes {start}-{end}/{size}"
+            return Response(data[start:end + 1], status_code=206, media_type="audio/mpeg", headers=hdr)
+        return Response(data, media_type="audio/mpeg", headers=hdr)
 
     async def gen():
         i = 0

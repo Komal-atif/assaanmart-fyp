@@ -91,13 +91,24 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   // ---- audio ---------------------------------------------------------------
   // `onStart` fires when the sound REALLY starts, so "Speaking…" is only shown while the customer can hear the agent.
   // If the sound has not started after 8 s the turn is given up (the window never hangs waiting for audio).
+  // Phones only let a page play sound after a tap. A silent clip played inside the first tap "unlocks" the one audio
+  // element used for the whole conversation, so the agent's later replies are allowed to play too.
+  const [blockedTap, setBlockedTap] = useState<null | (() => void)>(null);
+  const unlockAudio = () => {
+    const a = playerRef.current || (playerRef.current = new Audio());
+    if (a.src) return;   // already in use (or already unlocked)
+    const silent = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+    a.src = silent;
+    a.play().then(() => { if (a.src === silent) a.pause(); }).catch(() => { if (a.src === silent) a.removeAttribute('src'); });
+  };
+
   const playOnce = (url: string, onStart?: () => void) =>
     new Promise<void>((resolve) => {
       const a = playerRef.current || (playerRef.current = new Audio());
       if (resolverRef.current) resolverRef.current();
       resolverRef.current = resolve;
       let started = false;
-      const guard = window.setTimeout(() => { if (!started) done(); }, 8000);
+      const guard = window.setTimeout(() => { if (!started) done(); }, IS_MOBILE ? 20000 : 8000);   // phones: slower network, more time
       const done = () => {
         window.clearTimeout(guard);
         if (resolverRef.current === resolve) resolverRef.current = null;
@@ -107,13 +118,21 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         if (started) return;
         started = true;
         window.clearTimeout(guard);
+        setBlockedTap(null);
         onStart?.();
       };
       a.onended = done;
       a.onerror = done;
       a.preload = 'auto';
       a.src = url.startsWith('http') ? url : `${getBackendUrl()}${url}`;
-      a.play().catch(done);
+      a.play().catch((e) => {
+        if (e && e.name === 'NotAllowedError') {
+          // the browser blocked the sound: ask for one tap, then play it (never leave the customer in silence)
+          window.clearTimeout(guard);
+          setBlockedTap(() => () => { setBlockedTap(null); a.play().catch(done); });
+          window.setTimeout(() => { if (!started) { setBlockedTap(null); done(); } }, 60000);
+        } else done();
+      });
     });
 
   const lastAudioRef = useRef<string | null>(null);   // the agent's last sentence, repeated when the customer is silent
@@ -138,7 +157,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         if (my !== tokenRef.current) return;
         setPhase('speaking');
         // the microphone listens for a real interruption only while the agent is audible
-        if (interruptRef.current && activeRef.current && !IS_MOBILE) voice.listen({ bargeIn: true });
+        if (interruptRef.current && activeRef.current) voice.listen({ bargeIn: true });
         else voice.pause();
       });
       await new Promise((r) => setTimeout(r, 200)); // let the room echo of the agent's voice fade before listening
@@ -309,6 +328,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       setNotice('Microphone access is blocked. Please allow the microphone in your browser settings.');
       return;
     }
+    unlockAudio();
     activeRef.current = true;
     setNotice('');
     setStarted(true);
@@ -398,7 +418,10 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const live = phase === 'listening' || phase === 'speaking' || phase === 'thinking';
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-6 overflow-y-auto animate-in fade-in duration-200">
+    <div onClick={unlockAudio} onTouchEnd={unlockAudio} className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-6 overflow-y-auto animate-in fade-in duration-200">
+      {blockedTap && (
+        <button onClick={blockedTap} className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] rounded-full bg-[#1DAA61] px-6 py-3 text-white font-bold shadow-xl">🔊 Tap to hear the agent</button>
+      )}
       <div
         className="relative w-full max-w-5xl max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-3rem)] flex flex-col bg-white rounded-3xl shadow-2xl border border-[#e0f4e7] my-auto overflow-hidden"
         onClick={(e) => e.stopPropagation()}

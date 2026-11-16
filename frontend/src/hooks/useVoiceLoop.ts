@@ -170,12 +170,12 @@ export function useVoiceLoop({
         const floor = noiseFloorRef.current;
         if (isListeningRef.current) {
           const startT = Math.max(0.08, floor * 1.7);   // sensitive enough for quiet voices / phone mics
-          const bargeT = Math.max(0.10, bargeBaseRef.current * 1.8);   // relative to what the agent's own voice already adds to the room
+          const bargeT = IS_MOBILE ? Math.max(0.16, bargeBaseRef.current * 2.4) : Math.max(0.10, bargeBaseRef.current * 1.8);   // phones: speaker next to the mic, so a stricter bar   // relative to what the agent's own voice already adds to the room
           // the longer someone keeps talking, the stricter 'silence' becomes (0.5 -> 0.7 of the customer's own level after 8 s),
           // so a TV / people in the background cannot hold the microphone open
           const k = hasSpokenRef.current && now - speechStartRef.current > 8000 ? 0.7 : 0.5;
           const threshold = isBargeInRef.current ? bargeT : hasSpokenRef.current ? Math.max(startT, userLevelRef.current * k) : startT;
-          const needMs = isBargeInRef.current ? 300 : 200;
+          const needMs = isBargeInRef.current ? (IS_MOBILE ? 450 : 300) : 200;
 
           if (!isBargeInRef.current && norm > peakRef.current) peakRef.current = norm;
           if (norm > threshold) {
@@ -215,7 +215,12 @@ export function useVoiceLoop({
       };
       updateVolume();
       if (watchdogRef.current) clearInterval(watchdogRef.current);
-      watchdogRef.current = setInterval(() => checkCaps(performance.now()), 500);
+      watchdogRef.current = setInterval(() => {
+        // iPhone Safari suspends the audio engine whenever sound plays: wake it so the microphone level keeps being measured
+        const c = audioCtxRef.current;
+        if (c && c.state === 'suspended') c.resume().catch(() => {});
+        checkCaps(performance.now());
+      }, 500);
     }
 
     return stream;
@@ -318,7 +323,8 @@ export function useVoiceLoop({
         onUtteranceRef.current(blob);
       };
 
-      recorder.start(100); // chunk every 100ms
+      if (/iPhone|iPad|iPod/i.test(navigator.userAgent) || (/Safari/i.test(navigator.userAgent) && !/Chrome|Chromium|Android/i.test(navigator.userAgent))) recorder.start();   // Safari: one clean file at stop (chunked mp4 pieces can be unreadable)
+      else recorder.start(100); // chunk every 100ms
     } catch (err) {
       console.warn('Could not create MediaRecorder:', err);
     }
