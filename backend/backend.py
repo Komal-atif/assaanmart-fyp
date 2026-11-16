@@ -1898,13 +1898,18 @@ QR_RUPEE = re.compile(r"\brs\.?(?![a-z])|\brupee|\brupay|\brupiy|\bpkr\b|روپ|
 def match_by_price(text, options):
     """"fifty rupees pack" / "50 rupay wala" / "پچاس روپے والا" = the option that costs 50 (or is named 'Rs 50 Pack').
     Only used when the customer says a money word, so a plain '50' is never taken for a price."""
-    if not QR_RUPEE.search(text.lower()):
-        return []
+    money_word = bool(QR_RUPEE.search(text.lower()))
     am = parse_amount(text)
     if am is None or am.has_unit or am.value <= 0:
         return []
     n = am.value
-    return [v for v in options if abs(float(v["price"]) - n) < 0.5 or re.search(rf"\brs\.?\s*{int(n)}(?!\d)", v["name"], re.I)]
+    named = [v for v in options if re.search(rf"\brs\.?\s*{int(n)}(?!\d)", v["name"], re.I)]
+    if money_word:
+        return [v for v in options if abs(float(v["price"]) - n) < 0.5 or v in named]
+    # no money word ("the seventy pack", or STT wrote "seventy two piece pack"): only for options named by their price ("Rs 70 Pack")
+    if n >= 5 and any(re.search(r"\brs\.?\s*\d+", v["name"], re.I) for v in options):
+        return named
+    return []
 
 
 async def handle_variant(utt, lang):
@@ -1913,7 +1918,7 @@ async def handle_variant(utt, lang):
         return bc
     variants, shown = current["variants"], current["shown"] or current["variants"]
     full = current.get("all_variants") or variants
-    ph = match_by_price(utt.both, full)                # "I want the fifty rupees pack"
+    ph = match_by_price(utt.both, variants) or match_by_price(utt.both, full)      # "I want the fifty rupees pack"
     if ph and len(ph) < len(full):
         return select_product(lang, ph[0]) if len(ph) == 1 else ask_variant(lang, ph)
     grp = item_groups(utt.both, full)                  # "I want both the potato and the tomato" -> take them one after another
@@ -2289,11 +2294,34 @@ def packs_from_text(text, product):
     return qty, abs(ratio - qty) > 1e-6
 
 
+MAX_PER_ITEM = 10
+LIMIT_EN = "You have reached the limit for this item."
+LIMIT_UR = "اس آئٹم کی حد پوری ہو چکی ہے۔"
+
+
+def item_cap(p):
+    """Most the customer can buy of one item: 10, and never more than what is in stock."""
+    stock = PRODUCTS.get(p["id"], {}).get("stock") if isinstance(p, dict) and "id" in p else None
+    if stock is None:
+        stock = p.get("stock") if isinstance(p, dict) else None
+    return MAX_PER_ITEM if stock is None else max(0, min(MAX_PER_ITEM, int(stock)))
+
+
 def add_selected_to_cart(lang, qty, rounded=False):
     """Puts current['product'] x qty into the cart, moves on to the next queued item."""
     global current
     p = current["product"]
     existing = next((c for c in current_cart if c["id"] == p["id"]), None)
+    cap = item_cap(p)
+    have = existing["quantity"] if existing else 0
+    limited = False
+    if have + qty > cap:
+        limited = True
+        qty = max(0, cap - have)
+    if limited and qty <= 0:                       # nothing more of this one can be added
+        msg = t(lang, LIMIT_EN, LIMIT_UR)
+        current = None
+        return compose(msg, start_next(lang), lang)
     if existing:
         existing["quantity"] += qty
     else:
@@ -2303,6 +2331,8 @@ def add_selected_to_cart(lang, qty, rounded=False):
     unit, line = money(p["price"], lang), money(p["price"] * qty, lang)
     confirm = t(lang, f"Confirmed: {fmt_qty(qty)} × {p['name']} at {unit} each — {line}.",
                 f"کنفرم: {fmt_qty(qty)} × {p['name']}، {unit} فی عدد — کل {line}۔")
+    if limited:
+        confirm += " " + t(lang, LIMIT_EN, LIMIT_UR)
     if rounded:
         confirm += t(lang, f" It comes in {p['size']} packs, so I rounded up.", f" یہ {p['size']} کے پیک میں ملتا ہے، اس لیے اوپر round کیا۔")
     current = None
@@ -2325,6 +2355,8 @@ async def contextual_fallback(utt, lang):
         f"Product chosen so far: {(current.get('product') or {}).get('name')}.\n"
         f"Brands available: {', '.join(current['brands'])}.\n"
         f"Products in this family:\n{listing}\n"
+        f"The options just offered to the customer (he is choosing among THESE unless he clearly names something else): "
+        f"{[p['id'] for p in (current.get('variants') or [])[:12]]}\n"
         f"Cart: {[(c['name'], c['quantity']) for c in current_cart]}\n"
         f'The customer just said: "{utt.both}"\n\n'
         "Choose exactly ONE action and reply with JSON only:\n"
@@ -2346,7 +2378,11 @@ async def contextual_fallback(utt, lang):
     a = act.get("action")
     if a == "pick_product" and act.get("product_id") in ids:
         p = PRODUCTS[act["product_id"]]
-        if not _words_point_to(p, current.get("variants") or [], utt.both):
+        offered = current.get("variants") or []
+        if offered and p not in offered and not _words_point_to(p, current.get("all_variants") or offered, utt.both):
+            print("🛑 that product was not among the offered options and the words do not name it — asking again")
+            return None
+        if not _words_point_to(p, offered, utt.both):
             print("🛑 the words do not tell the options apart — asking again instead of guessing")
             return None
         current["brand"] = p["brand"]
@@ -4342,7 +4378,10 @@ async def place_web_order(request: Request, payload: dict):
         except (TypeError, ValueError):
             continue
         p = PRODUCTS.get(pid)
-        if not p or qty <= 0 or qty > 500:
+        if not p or qty <= 0:
+            continue
+        qty = min(qty, item_cap(p))
+        if qty <= 0:
             continue
         line = p["price"] * qty
         subtotal += line
@@ -4918,7 +4957,7 @@ def _cart_update(payload: dict):
             if qty is None or qty <= 0:
                 current_cart.remove(c)
             else:
-                c["quantity"] = min(qty, 100)
+                c["quantity"] = min(qty, item_cap(PRODUCTS.get(c["id"]) or c))
             order_pending_confirmation = False
             break
     return cart_snapshot()

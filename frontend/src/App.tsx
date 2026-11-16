@@ -24,6 +24,7 @@ import { CartItem, Product, User, Order } from './types';
 import { Check, X, ShoppingBag } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { MyOrdersModal } from './components/MyOrdersModal';
+import { clampQty, maxFor, LIMIT_MSG } from './utils/limits';
 
 interface FlyingItem {
   id: string;
@@ -222,10 +223,15 @@ export default function App() {
       return;
     }
 
+    const inCart = cart.find((i) => i.id === product.id)?.quantity ?? 0;
+    if (inCart >= maxFor(product)) {
+      showToast(LIMIT_MSG);
+      return;
+    }
     setCart((prev) => {
       const existing = prev.find((i) => i.id === product.id);
       if (existing) {
-        return prev.map((i) => (i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i));
+        return prev.map((i) => (i.id === product.id ? { ...i, quantity: clampQty(i, i.quantity + 1) } : i));
       }
       return [...prev, { ...product, quantity: 1 }];
     });
@@ -238,12 +244,22 @@ export default function App() {
 
   const handleAddMultiple = (product: Product, quantity: number) => {
     if (product.stock === 0 || product.price == null) return;
+    const have = cart.find((i) => i.id === product.id)?.quantity ?? 0;
+    if (have >= maxFor(product)) {
+      showToast(LIMIT_MSG);
+      return;
+    }
+    const room = maxFor(product) - have;
+    if (quantity > room) {
+      quantity = room;
+      showToast(LIMIT_MSG);
+    }
     setCart((prev) => {
       const existing = prev.find((i) => i.id === product.id);
       if (existing) {
-        return prev.map((i) => (i.id === product.id ? { ...i, quantity: i.quantity + quantity } : i));
+        return prev.map((i) => (i.id === product.id ? { ...i, quantity: clampQty(i, i.quantity + quantity) } : i));
       }
-      return [...prev, { ...product, quantity }];
+      return [...prev, { ...product, quantity: clampQty(product, quantity) }];
     });
     showToast(`Added ${quantity}x ${product.name} to cart`);
   };
@@ -255,10 +271,10 @@ export default function App() {
         const existing = updated.find((i) => i.id === product.id);
         if (existing) {
           updated = updated.map((i) =>
-            i.id === product.id ? { ...i, quantity: i.quantity + quantity } : i
+            i.id === product.id ? { ...i, quantity: clampQty(i, i.quantity + quantity) } : i
           );
         } else {
-          updated.push({ ...product, quantity });
+          updated.push({ ...product, quantity: clampQty(product, quantity) });
         }
       });
       return updated;
@@ -280,10 +296,10 @@ export default function App() {
         const existing = updated.find((i) => i.id === product.id);
         if (existing) {
           updated = updated.map((i) =>
-            i.id === product.id ? { ...i, quantity: i.quantity + quantity } : i
+            i.id === product.id ? { ...i, quantity: clampQty(i, i.quantity + quantity) } : i
           );
         } else {
-          updated.push({ ...product, quantity });
+          updated.push({ ...product, quantity: clampQty(product, quantity) });
         }
       });
       return updated;
@@ -299,9 +315,9 @@ export default function App() {
         if (product.stock === 0 || product.price == null) return;
         const existing = updated.find((i) => i.id === product.id);
         if (existing) {
-          updated = updated.map((i) => (i.id === product.id ? { ...i, quantity: i.quantity + quantity } : i));
+          updated = updated.map((i) => (i.id === product.id ? { ...i, quantity: clampQty(i, i.quantity + quantity) } : i));
         } else {
-          updated.push({ ...product, quantity });
+          updated.push({ ...product, quantity: clampQty(product, quantity) });
         }
       });
       return updated;
@@ -324,9 +340,14 @@ export default function App() {
   };
 
   const handleChangeQuantity = (productId: string, delta: number) => {
+    const cur = cart.find((i) => i.id === productId);
+    if (cur && delta > 0 && cur.quantity >= maxFor(cur)) {
+      showToast(LIMIT_MSG);
+      return;
+    }
     setCart((prev) =>
       prev
-        .map((i) => (i.id === productId ? { ...i, quantity: i.quantity + delta } : i))
+        .map((i) => (i.id === productId ? { ...i, quantity: clampQty(i, i.quantity + delta) } : i))
         .filter((i) => i.quantity > 0)
     );
   };
@@ -587,12 +608,11 @@ export default function App() {
       <MyOrdersModal isOpen={isOrdersOpen} onClose={() => setIsOrdersOpen(false)} user={user} />
 
       {/* Product Detail Modal */}
-<ProductDetailModal
-  key={selectedProductDetail?.id ?? 'no-product'}
-  product={selectedProductDetail}
-  onClose={() => setSelectedProductDetail(null)}
-  onAddToCart={handleAddMultiple}
-/>
+      <ProductDetailModal
+        product={selectedProductDetail}
+        onClose={() => setSelectedProductDetail(null)}
+        onAddToCart={handleAddMultiple}
+      />
 
       {/* Checkout Modal */}
       <CheckoutModal
@@ -603,7 +623,7 @@ export default function App() {
         user={user}
         onOrderSuccess={(order: Order) => {
           setCart([]);
-          showToast(`Order #${order.id} placed successfully!`);
+          showToast(`Order ${order.id} placed successfully!`);
         }}
       />
 

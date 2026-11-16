@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, Package, ChevronDown, ChevronUp, Mic, ShoppingBag, Loader2, RefreshCw } from 'lucide-react';
 import { fetchMyOrders, MyOrder } from '../services/orderApi';
 import { User } from '../types';
+import { formatOrderId } from '../utils/orderId';
 
 interface MyOrdersModalProps {
   isOpen: boolean;
@@ -78,7 +79,7 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({ isOpen, onClose, u
           {!user ? (
             <p className="text-sm text-slate-500 text-center py-10">Please sign in to see your past orders.</p>
           ) : loading && orders.length === 0 ? (
-            <div className="py-10 flex justify-center text-[#46a468]">
+            <div className="py-10 flex justify-center text-[#148a4c]">
               <Loader2 className="w-6 h-6 animate-spin" />
             </div>
           ) : error ? (
@@ -97,12 +98,12 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({ isOpen, onClose, u
                     onClick={() => setOpenId(isOpenRow ? null : o.id)}
                     className="w-full p-4 flex items-center gap-3 text-left hover:bg-slate-50 cursor-pointer"
                   >
-                    <div className="w-9 h-9 rounded-xl bg-[#f3fbf6] text-[#46a468] flex items-center justify-center shrink-0">
+                    <div className="w-9 h-9 rounded-xl bg-[#f3fbf6] text-[#148a4c] flex items-center justify-center shrink-0">
                       {o.source === 'voice' ? <Mic className="w-4 h-4" /> : <ShoppingBag className="w-4 h-4" />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-slate-900">
-                        Order #AM-{o.id}
+                        Order {formatOrderId(o.id)}
                         <span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#e0f4e7] text-[#2a6b43] uppercase">
                           {o.status}
                         </span>
@@ -112,7 +113,7 @@ export const MyOrdersModal: React.FC<MyOrdersModalProps> = ({ isOpen, onClose, u
                         {o.source === 'voice' ? ' · by voice' : ''}
                       </p>
                     </div>
-                    <span className="text-sm font-black text-[#378553] shrink-0">PKR {Math.round(o.total).toLocaleString()}</span>
+                    <span className="text-sm font-black text-[#0f6e3d] shrink-0">PKR {Math.round(o.total).toLocaleString()}</span>
                     {isOpenRow ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
                   </button>
 

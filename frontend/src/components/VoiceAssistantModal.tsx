@@ -6,7 +6,7 @@ import { VoicePhase } from './voice/VoiceAvatar';
 import { VoiceStage } from './voice/VoiceStage';
 import { VoiceProductModal } from './voice/VoiceProductModal';
 import { VoiceBasketPanel } from './voice/VoiceBasketPanel';
-import { useVoiceLoop } from '../hooks/useVoiceLoop';
+import { useVoiceLoop, IS_MOBILE } from '../hooks/useVoiceLoop';
 import {
   getBackendUrl,
   checkBackendHealth,
@@ -138,7 +138,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         if (my !== tokenRef.current) return;
         setPhase('speaking');
         // the microphone listens for a real interruption only while the agent is audible
-        if (interruptRef.current && activeRef.current) voice.listen({ bargeIn: true });
+        if (interruptRef.current && activeRef.current && !IS_MOBILE) voice.listen({ bargeIn: true });
         else voice.pause();
       });
       await new Promise((r) => setTimeout(r, 200)); // let the room echo of the agent's voice fade before listening
@@ -281,6 +281,19 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   };
 
   // Closing the window always stops the microphone and the voice.
+  // self-repair: the screen says "Listening" but the microphone loop is not running (a missed event) -> start it again
+  const phaseNowRef = useRef<VoicePhase>('off');
+  phaseNowRef.current = phase;
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (activeRef.current && phaseNowRef.current === 'listening' && !voice.isListening()) {
+        console.warn('Voice: listening screen without a running microphone loop - restarting it');
+        voice.listen();
+      }
+    }, 4000);
+    return () => window.clearInterval(id);
+  }, []);
+
   useEffect(() => {
     if (!isOpen && (started || activeRef.current)) {
       shutDown();

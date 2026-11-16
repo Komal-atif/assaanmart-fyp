@@ -141,7 +141,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
     if (step === 'loginphone') return say(tt('Okay. What is your phone number?', 'ٹھیک ہے۔ آپ کا فون نمبر کیا ہے؟'));
     if (step === 'name') return say(tt("Let's create your account. What is your full name?", 'آئیں آپ کا اکاؤنٹ بناتے ہیں۔ آپ کا پورا نام کیا ہے؟'));
     if (step === 'phone') return say(tt('Thank you. What is your phone number?', 'شکریہ۔ آپ کا فون نمبر کیا ہے؟'));
-    if (step === 'address') return say(tt('And your delivery address? Say it now, or press the Use my current location button. You can also say skip.', 'اور آپ کی ڈیلیوری کا ایڈریس؟ ابھی بولیں، یا یوز مائی کرنٹ لوکیشن کا بٹن دبائیں۔ آپ سکپ بھی کہہ سکتے ہیں۔'));
+    if (step === 'address') return say(tt('And your delivery address? Say it now, or press the Use my current location button.', 'اور آپ کی ڈیلیوری کا ایڈریس؟ ابھی بولیں، یا یوز مائی کرنٹ لوکیشن کا بٹن دبائیں۔'));
     if (step === 'which') return say(tt('Which one should I change: name, phone or address?', 'کیا بدلنا ہے: نام، فون یا ایڈریس؟'));
     const v = valuesRef.current;
     const digits = v.phone.split('').join(' ');
@@ -183,7 +183,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
       if (step === 'name' || step === 'phone' || step === 'address') {
         const r = await formVoiceReply(blob, step, lang);
         if (!r.heard) return listenNow();
-        if (step === 'address' && /skip|سکپ|اسکپ|چھوڑ/i.test(r.heard)) {
+        if (false) {
           setAddress('');
           skippedAddressRef.current = true;
           valuesRef.current = { ...valuesRef.current, address: '' };

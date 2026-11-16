@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Plus, Minus, Check, Leaf, Wallet, Truck, Mic } from 'lucide-react';
 import { Product } from '../types';
+import { maxFor } from '../utils/limits';
 import { FitImage } from './FitImage';
 
 interface ProductDetailModalProps {
@@ -21,10 +22,12 @@ const INFO = [
 export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product, onClose, onAddToCart }) => {
   const [qty, setQty] = useState(1);
   const [imageError, setImageError] = useState(false);
+  const [limitHit, setLimitHit] = useState(false);
 
   // a new product always starts again at 1
   useEffect(() => {
     setQty(1);
+    setLimitHit(false);
     setImageError(false);
   }, [product?.id]);
 
@@ -32,17 +35,13 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
 
   const isOutOfStock = product.stock === 0;
   const isPriceUnavailable = product.price == null;
-
-  const unitPrice = product.price ?? 0;
+  const unitPrice = product.price || 0;
   const totalPrice = unitPrice * qty;
   const canBuy = !isOutOfStock && !isPriceUnavailable;
   const fresh = isFreshProduce(product);
 
   const handleConfirm = () => {
-    if (isOutOfStock || isPriceUnavailable) return;
-
     onAddToCart(product, qty);
-    setQty(1);
     onClose();
   };
 
@@ -54,7 +53,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
       >
         {/* close */}
         <button
-          type="button"
           onClick={onClose}
           className="absolute top-3 right-3 z-20 w-9 h-9 rounded-full bg-white/90 backdrop-blur border border-[#e0f4e7] hover:bg-[#e0f4e7] text-[#2a6b43] flex items-center justify-center transition-colors cursor-pointer shadow-sm"
           aria-label="Close"
@@ -151,13 +149,14 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
                 </button>
                 <span className="w-12 text-center font-black text-lg text-[#1f5233]">{qty}</span>
                 <button
-                  onClick={() => setQty(Math.min(99, qty + 1))}
+                  onClick={() => { if (qty >= maxFor(product)) setLimitHit(true); else setQty(qty + 1); }}
                   className="w-9 h-9 rounded-full bg-[#1daa61] hover:bg-[#148a4c] flex items-center justify-center text-white transition-colors cursor-pointer active:scale-90"
                   aria-label="More"
                 >
                   <Plus className="w-4 h-4" />
                 </button>
               </div>
+              {limitHit && <p className="mt-2 text-xs font-bold text-rose-600">You have reached the limit for this item</p>}
             </div>
           )}
 
@@ -176,7 +175,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
 
           {/* add to cart */}
           <button
-            type="button"
             onClick={handleConfirm}
             disabled={!canBuy}
             className={`w-full h-12 rounded-full font-bold text-[15px] tracking-wide flex items-center justify-center transition-all cursor-pointer ${
@@ -187,7 +185,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
           >
             {isOutOfStock ? 'Out of stock' : isPriceUnavailable ? 'Unavailable' : 'Add to Cart'}
           </button>
-
         </div>
       </div>
     </div>

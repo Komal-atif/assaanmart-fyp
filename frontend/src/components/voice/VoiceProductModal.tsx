@@ -15,13 +15,14 @@ const money = (n?: number, t?: string) => (t ? t : typeof n === 'number' ? `Rs. 
 export const VoiceProductModal: React.FC<Props> = ({ options, phase, onSelect }) => {
   const [hidden, setHidden] = useState(false);
   const [qty, setQty] = useState(1);
+  const [limitMsg, setLimitMsg] = useState(false);
   const items: any[] = useMemo(() => options?.items ?? [], [options]);
   const isQty = options?.stage === 'quantity';
   const namesOnly = options?.stage === 'brand' || (items.length > 0 && !items.some((i: any) => i.image_url));
   const key = useMemo(() => JSON.stringify([options?.stage, options?.title, items.map((i) => i.value)]), [options, items]);
 
   // a new set of choices always opens the pop-up again
-  useEffect(() => { setHidden(false); setQty(Math.max(1, Math.round(options?.suggested_qty ?? 1))); }, [key]);
+  useEffect(() => { setHidden(false); setLimitMsg(false); setQty(Math.min(10, Math.max(1, Math.round(options?.suggested_qty ?? 1)))); }, [key]);
 
   const show = !!options && (items.length > 0 || isQty) && !hidden;
   if (!show) return null;
@@ -74,10 +75,11 @@ export const VoiceProductModal: React.FC<Props> = ({ options, phase, onSelect })
                   <Minus className="w-5 h-5" />
                 </button>
                 <span className="w-14 text-center text-2xl font-black text-[#1f5233] tabular-nums">{qty}</span>
-                <button onClick={() => setQty((q) => Math.min(99, q + 1))} aria-label="More" className="w-12 h-12 rounded-full text-[#2a6b43] hover:bg-[#e0f4e7] flex items-center justify-center active:scale-90 transition cursor-pointer">
+                <button onClick={() => { if (qty >= 10) setLimitMsg(true); else setQty(qty + 1); }} aria-label="More" className="w-12 h-12 rounded-full text-[#2a6b43] hover:bg-[#e0f4e7] flex items-center justify-center active:scale-90 transition cursor-pointer">
                   <Plus className="w-5 h-5" />
                 </button>
               </div>
+              {limitMsg && <p className="text-sm font-bold text-rose-600">You have reached the limit for this item</p>}
               <button
                 onClick={() => onSelect('', qty)}
                 className="px-7 py-3 rounded-full bg-[#1DAA61] hover:bg-[#148a4c] text-white font-extrabold flex items-center gap-2 shadow-lg active:scale-95 transition cursor-pointer"
