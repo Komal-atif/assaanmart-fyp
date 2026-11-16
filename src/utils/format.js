@@ -25,12 +25,15 @@ export function formatDateTime(iso) {
   return `${formatDate(iso)}, ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
 }
 
-// "1.0" + "L" -> "1 L",  "Small" -> "Small",  nothing -> "—"
+// "1.0" + "L" -> "1 L",  "200 g" + "g" -> "200 g" (unit is not written twice),  "Small" -> "Small",  nothing -> "—"
 export function formatPackage(product) {
-  const size = product.packageSize
+  const size = product.packageSize == null ? '' : String(product.packageSize).trim()
+  const unit = product.unit == null ? '' : String(product.unit).trim()
   const n = Number(size)
   const shown = size && Number.isFinite(n) ? String(n) : size
-  const out = [shown, product.unit].filter(Boolean).join(' ')
+  // the size text already ends with the unit ("200 g" + "g") -> do not add it again
+  const hasUnit = unit && new RegExp(`(^|\\s|\\d)${unit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i').test(shown)
+  const out = [shown, hasUnit ? '' : unit].filter(Boolean).join(' ').replace(/\b([A-Za-z]+)\s+\1\b/gi, '$1')
   return out || '—'
 }
 

@@ -1,33 +1,104 @@
+
 import { useEffect, useMemo, useState } from 'react'
-import { imageCandidates, rememberWorking, categoryLook } from '../../utils/images'
+import {
+  imageCandidates,
+  rememberWorking,
+  categoryLook,
+} from '../../utils/images'
 
-// Shows the product photo. It tries every place from utils/images.js; if all fail it shows a coloured tile
-// with the category icon, so the card still looks good. size = pixels, or fill = fill the parent box.
-export default function ProductImage({ src, alt = '', size = 44, fill = false, category }) {
+export default function ProductImage({
+  src,
+  alt = '',
+  size = 44,
+  fill = false,
+  category,
+}) {
   const list = useMemo(() => imageCandidates(src), [src])
-  const [i, setI] = useState(0)
-  const [loaded, setLoaded] = useState(false)
-  useEffect(() => { setI(0); setLoaded(false) }, [src])
 
-  const current = list[i]
+  const [index, setIndex] = useState(0)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    setIndex(0)
+    setLoaded(false)
+  }, [src])
+
+  const current = list[index]
   const [emoji, bg] = categoryLook(category)
-  const style = fill ? {} : { width: size, height: size, borderRadius: Math.round(size / 4) }
+
+  const containerStyle = {
+    width: fill ? '100%' : size,
+    height: fill ? '100%' : size,
+    minWidth: 0,
+    minHeight: 0,
+    boxSizing: 'border-box',
+    borderRadius: fill ? 0 : Math.round(size / 4),
+    overflow: 'hidden',
+    display: 'grid',
+    placeItems: 'center',
+    position: 'relative',
+    flexShrink: 0,
+    padding: 0,
+  }
 
   return (
-    <div className={`thumb ${fill ? 'fill' : ''} ${current && !loaded ? 'loading' : ''}`} style={style}>
+    <div
+      className={`thumb ${fill ? 'fill' : ''} ${
+        current && !loaded ? 'loading' : ''
+      }`}
+      style={containerStyle}
+    >
       {current ? (
         <img
           key={current.url}
           src={current.url}
           alt={alt}
           loading="lazy"
+          decoding="async"
           className={loaded ? 'ok' : ''}
-          onLoad={() => { setLoaded(true); rememberWorking(current.kind) }}
-          onError={() => { setLoaded(false); setI((n) => n + 1) }}
+          onLoad={() => {
+            setLoaded(true)
+            rememberWorking(current.kind)
+          }}
+          onError={() => {
+            setLoaded(false)
+            setIndex((previous) => previous + 1)
+          }}
+          style={{
+            display: 'block',
+            width: '100%',
+            height: '100%',
+            maxWidth: '100%',
+            maxHeight: '100%',
+            objectFit: 'contain',
+            objectPosition: 'center',
+            boxSizing: 'border-box',
+            padding: 8,
+            opacity: loaded ? 1 : 0,
+          }}
         />
       ) : (
-        <div className="thumb-fallback" style={{ background: bg }} title="No picture found for this product" role="img" aria-label={alt}>
-          <span style={{ fontSize: fill ? 46 : Math.max(16, size * 0.5) }}>{emoji}</span>
+        <div
+          className="thumb-fallback"
+          style={{
+            width: '100%',
+            height: '100%',
+            minWidth: 0,
+            minHeight: 0,
+            background: bg,
+            display: 'grid',
+            placeItems: 'center',
+          }}
+          role="img"
+          aria-label={alt || 'Product image unavailable'}
+        >
+          <span
+            style={{
+              fontSize: fill ? 46 : Math.max(16, size * 0.5),
+            }}
+          >
+            {emoji}
+          </span>
         </div>
       )}
     </div>

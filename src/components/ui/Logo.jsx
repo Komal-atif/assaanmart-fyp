@@ -1,6 +1,11 @@
-import { LOGO_SRC, LOGO_MARK_SRC } from '../../config'
+import AnimatedBrand from './AnimatedBrand'
 
-// PLACEHOLDER logo. Replace public/images/logo.svg (and logo-mark.svg) with the real files; nothing else to change.
+// Animated AssanMart brand (same intro as the store website). Same props as before, so Sidebar, Login and Splash need no change.
+//   height : size of the round logo in px      mark : true = only the round logo, false = logo + "AssanMart" text
 export default function Logo({ height = 40, mark = false, className = '' }) {
-  return <img className={`logo ${className}`} src={mark ? LOGO_MARK_SRC : LOGO_SRC} alt="AssanMart" style={{ height }} draggable="false" />
+  return (
+    <span className={`logo ${className}`} aria-label="AssanMart" style={{ display: 'inline-flex', alignItems: 'center' }}>
+      <AnimatedBrand size={height} mark={mark} />
+    </span>
+  )
 }
