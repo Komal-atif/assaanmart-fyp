@@ -7,11 +7,18 @@ import Button from '../components/ui/Button'
 import Icon from '../components/ui/Icon'
 import { useToast } from '../context/ToastContext'
 import ProductImage from '../components/ui/ProductImage'
-import { addProduct, getProduct, getProducts, updateProduct } from '../services/productService'
+import { addProduct, getProduct, getProducts, updateProduct, deleteProduct } from '../services/productService'
 
 const BLANK = {
   name: '', brand: '', brandUr: '', category: '', subcategory: '', productType: '',
   packageSize: '', unit: '', price: '', stockQuantity: '', imageUrl: '', aliases: '', isActive: true,
+}
+
+// Windows path  \products\Dairy\x.png  ->  /products/Dairy/x.png   (also adds the leading / if missing)
+const fixLink = (v) => {
+  let s = String(v ?? '').trim().replace(/^"+|"+$/g, '').replace(/\\/g, '/')
+  if (s && !/^https?:\/\//i.test(s) && !s.startsWith('/')) s = '/' + s
+  return s
 }
 
 function Form({ initial, isNew, categories, subcategories }) {
@@ -25,7 +32,7 @@ function Form({ initial, isNew, categories, subcategories }) {
   async function submit(e) {
     e.preventDefault()
     setError('')
-    const link = f.imageUrl.trim()
+    const link = fixLink(f.imageUrl)
     if (link && !/^(https?:\/\/|\/)/i.test(link)) {
       setError('Image link must start with http://, https:// or /')
       return
@@ -36,6 +43,19 @@ function Form({ initial, isNew, categories, subcategories }) {
       if (isNew) await addProduct(data)
       else await updateProduct(initial.id, data)
       toast(isNew ? 'Product added' : 'Product saved')
+      navigate('/products')
+    } catch (err) {
+      setError(err.message)
+      setSaving(false)
+    }
+  }
+
+  async function remove() {
+    if (!window.confirm(`Delete "${initial.name}" permanently? This cannot be undone.`)) return
+    setSaving(true)
+    try {
+      await deleteProduct(initial.id)
+      toast('Product deleted')
       navigate('/products')
     } catch (err) {
       setError(err.message)
@@ -71,7 +91,7 @@ function Form({ initial, isNew, categories, subcategories }) {
         <div className="field full">
           <label htmlFor="imageUrl">Image link</label>
           <div className="toolbar">
-            <ProductImage src={f.imageUrl.trim() || null} alt="Preview" size={56} category={f.category} />
+            <ProductImage src={fixLink(f.imageUrl) || null} alt="Preview" size={56} category={f.category} />
             <input id="imageUrl" style={{ flex: 1 }} placeholder="/products/Dairy/Milk/325.png  or  https://…" value={f.imageUrl} onChange={set('imageUrl')} />
           </div>
         </div>
@@ -84,6 +104,15 @@ function Form({ initial, isNew, categories, subcategories }) {
       </div>
       {error && <div className="notice">{error}</div>}
       <div className="form-actions">
+        {!isNew && (
+          <button
+            type="button" onClick={remove} disabled={saving}
+            style={{ font: 'inherit', fontWeight: 700, cursor: saving ? 'not-allowed' : 'pointer', padding: '0 26px', height: 52,
+              borderRadius: 999, background: '#fde8e8', color: '#b42318', border: '1px solid #f3b4ae', opacity: saving ? 0.6 : 1 }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#d92d20'; e.currentTarget.style.color = '#fff' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = '#fde8e8'; e.currentTarget.style.color = '#b42318' }}
+          >Delete</button>
+        )}
         <Button variant="ghost" onClick={() => navigate('/products')}>Cancel</Button>
         <Button type="submit" loading={saving}>{saving ? 'Saving…' : isNew ? 'Add product' : 'Save changes'}</Button>
       </div>
