@@ -1,83 +1,40 @@
-// Orders for the admin portal. There is no orders sheet yet, so this starts EMPTY (no fake orders).
-// When the backend/database writes orders, only this file changes (fetch instead of loadTable).
-import { loadTable, saveTable, pick, toIso } from './dataStore'
+// Orders placed in the store / by the voice agent, straight from the database.
+import { api } from './api'
 
-const TABLE = 'orders'
 export const ORDER_STATUSES = ['Pending', 'Confirmed', 'Packed', 'Out for Delivery', 'Delivered', 'Cancelled']
-
-// Old/other names -> our names (the customer app timeline uses "Order Placed")
-const STATUS_ALIASES = { 'order placed': 'Pending', processing: 'Confirmed', shipped: 'Out for Delivery' }
-
-const text = (v) => (v === undefined || v === null ? '' : String(v).trim())
+const toApiStatus = (s) => String(s).toLowerCase().replace(/\s+/g, '_')
+const fromApiStatus = (v) => {
+  const k = String(v ?? '').toLowerCase().replace(/[\s_]+/g, ' ').trim()
+  return ORDER_STATUSES.find((x) => x.toLowerCase() === k) || 'Pending'
+}
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
+const text = (v) => (v === undefined || v === null ? '' : String(v).trim())
 
-function normalizeStatus(v) {
-  const s = text(v).toLowerCase()
-  return ORDER_STATUSES.find((x) => x.toLowerCase() === s) || STATUS_ALIASES[s] || 'Pending'
-}
-
-function normalizeItems(v) {
-  let list = v
-  if (typeof list === 'string') {
-    try { list = JSON.parse(list) } catch { list = [] }
-  }
-  if (!Array.isArray(list)) return []
-  return list.map((i) => ({
-    productId: pick(i, 'productId', 'product_id', 'id') ?? null,
-    name: text(pick(i, 'name', 'product_name')),
-    quantity: num(pick(i, 'quantity', 'qty')),
-    price: num(pick(i, 'price', 'unit_price')),
+function normalize(r) {
+  const items = (r.items || []).map((i) => ({
+    productId: i.id ?? i.product_id ?? null, name: text(i.name), quantity: num(i.quantity), price: num(i.unit_price ?? i.price),
   }))
-}
-
-function normalizeOrder(r) {
-  const items = normalizeItems(pick(r, 'items', 'order_items'))
-  const total = pick(r, 'total', 'total_amount')
   return {
-    id: pick(r, 'id', 'order_id') ?? '',
-    customerName: text(pick(r, 'customerName', 'customer_name', 'customer')),
-    customerPhone: text(pick(r, 'customerPhone', 'customer_phone', 'phone')),
-    address: text(pick(r, 'address', 'delivery_address')),
-    paymentMethod: text(pick(r, 'paymentMethod', 'payment_method', 'payment')),
-    status: normalizeStatus(pick(r, 'status')),
-    items,
-    total: total !== undefined ? num(total) : items.reduce((s, i) => s + i.quantity * i.price, 0),
-    createdAt: toIso(pick(r, 'createdAt', 'created_at', 'date')),
-    updatedAt: toIso(pick(r, 'updatedAt', 'updated_at')),
+    id: r.id, customerName: text(r.customer_name), customerPhone: text(r.phone),
+    address: [text(r.address), text(r.city)].filter(Boolean).join(', '),
+    paymentMethod: text(r.payment_method), status: fromApiStatus(r.status), items,
+    total: num(r.total), createdAt: r.created_at ? (/[zZ]|[+-]\d\d:?\d\d$/.test(r.created_at) ? r.created_at : `${r.created_at}Z`) : '',
+    updatedAt: '', source: text(r.source), deliveryFee: num(r.delivery_fee),
   }
-}
-
-const copy = (o) => ({ ...o, items: o.items.map((i) => ({ ...i })) })
-
-// One-time cleanup of sample orders saved by older versions
-if (!localStorage.getItem('assanmart:orders-clean')) {
-  localStorage.removeItem('assanmart:orders')
-  localStorage.setItem('assanmart:orders-clean', '1')
-}
-
-async function table() {
-  const rows = await loadTable(TABLE, normalizeOrder)
-  return rows.filter((o) => o.id !== '')
 }
 
 // Newest first. Optional: getOrders({ status: 'Pending' })
 export async function getOrders({ status } = {}) {
-  const rows = (await table()).filter((o) => !status || o.status === status)
-  return rows.map(copy).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+  const rows = (await api('/admin/orders')).orders.map(normalize).filter((o) => o.id !== '' && o.id != null)
+  return rows.filter((o) => !status || o.status === status).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
 }
 
 export async function getOrder(id) {
-  const found = (await table()).find((o) => String(o.id) === String(id))
-  return found ? copy(found) : null
+  try { return normalize((await api(`/admin/orders/${id}`)).order) } catch (e) { if (/not found/i.test(e.message)) return null; throw e }
 }
 
 export async function updateOrderStatus(id, status) {
   if (!ORDER_STATUSES.includes(status)) throw new Error(`Invalid status: ${status}`)
-  const rows = await table()
-  const index = rows.findIndex((o) => String(o.id) === String(id))
-  if (index === -1) throw new Error('Order not found.')
-  const next = [...rows]
-  next[index] = { ...rows[index], status, updatedAt: new Date().toISOString() }
-  saveTable(TABLE, next)
-  return copy(next[index])
+  const r = await api(`/admin/orders/${id}/status`, { method: 'PATCH', body: { status: toApiStatus(status) } })
+  return normalize({ items: [], ...r.order })
 }
