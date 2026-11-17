@@ -16,7 +16,7 @@ const FLOWS: Record<Flow, { label: string; icon: React.ElementType; intro: strin
   voice: {
     label: 'Order by voice',
     icon: Mic,
-    intro: 'Say your whole list the way you would tell a shopkeeper. No typing, no searching.',
+    intro: '',
     steps: [
       { icon: Languages, title: 'Pick your language', text: 'Tap the Voice button and choose English or اردو. Roman Urdu and mixed sentences work too.' },
       { icon: Mic, title: 'Say your list', text: 'For example "2 kilo aata, 1 dozen anday aur ek doodh". Quantities and brands are picked up as you speak.' },
@@ -198,7 +198,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onOpenVoice, onOpenImage
         <h2 className="mt-3 text-xl sm:text-3xl font-black text-[#2a6b43]">
           Your grocery list, <span className="text-[#1DAA61]">just say it</span>
         </h2>
-        <p className="mt-1.5 text-xs sm:text-sm text-[#4d7a5c]">{flow.intro}</p>
+        {flow.intro && <p className="mt-1.5 text-xs sm:text-sm text-[#4d7a5c]">{flow.intro}</p>}
       </div>
 
       <div className="mt-5 flex justify-center">

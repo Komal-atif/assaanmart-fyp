@@ -664,10 +664,10 @@ img, video { max-width: 100%; }
   25% { transform: rotate(-14deg) translateX(-1px) }
   60% { transform: rotate(10deg) translateX(1px) }
 }
-.cart-badge { animation: cartBadgePop .35s cubic-bezier(.34,1.56,.64,1); }
+.cart-badge.pop { animation: cartBadgePop .35s cubic-bezier(.34,1.56,.64,1); }
 @keyframes cartBadgePop { from { transform: scale(.3) } to { transform: scale(1) } }
 @media (prefers-reduced-motion: reduce) {
-  .cart-btn:hover .cart-ico, .cart-badge { animation: none }
+  .cart-btn:hover .cart-ico, .cart-badge.pop { animation: none }
 }
 
 /* ---- phones: the page must never slide left / right ---- */

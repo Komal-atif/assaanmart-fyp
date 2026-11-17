@@ -365,11 +365,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             <h3 className="text-lg font-black text-slate-900">
               {completedOrder ? 'Order Confirmed 🎉' : 'Checkout & Confirm Order'}
             </h3>
-            <p className="text-xs text-slate-500">
-              {completedOrder
-                ? 'Your groceries are being prepared with care'
-                : 'Confirm your delivery address and payment'}
-            </p>
+            {completedOrder && (
+              <p className="text-xs text-slate-500">Your groceries are being prepared with care</p>
+            )}
           </div>
           <button
             onClick={onClose}

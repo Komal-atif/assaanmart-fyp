@@ -561,8 +561,7 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
               <ScanIcon className="w-5 h-5 text-[#148a4c]" /> Scan your grocery list
             </h3>
             <p className="text-xs text-[#4d7a5c]">
-              {step === 'upload' && 'Take a photo of your list. We read it and you choose each item.'}
-              {step === 'detected' && 'These are the items we found on your list.'}
+                            {step === 'detected' && 'These are the items we found on your list.'}
               {step === 'pick' && (qtyScreen ? `Item ${idx + 1} of ${rows.length}: how many do you want?` : `Item ${idx + 1} of ${rows.length}: choose the one you want.`)}
               {step === 'added' && 'Your items are in the cart.'}
               {step === 'summary' && 'Check your choices, then add them to your cart.'}

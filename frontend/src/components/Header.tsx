@@ -71,6 +71,15 @@ export const Header: React.FC<HeaderProps> = ({
   logoPlayKey = 0,
 }) => {
   const [isScrolled, setIsScrolled] = useState(false);
+  // the cart button is animated with a class that is switched on for a moment (never by re-creating the element,
+  // which breaks when the browser's page translator has touched the page and showed two icons)
+  const [cartPop, setCartPop] = useState(false);
+  useEffect(() => {
+    if (!cartHit && !cartCount) return;
+    setCartPop(true);
+    const id = window.setTimeout(() => setCartPop(false), 450);
+    return () => window.clearTimeout(id);
+  }, [cartHit, cartCount]);
   const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false); // account circle menu
   const searchContainerRef = useRef<HTMLDivElement>(null);
@@ -272,15 +281,15 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               ref={cartBtnRef}
               onClick={onOpenCart}
-              className="cart-btn group relative h-10 pl-3 pr-3 sm:pr-4 rounded-full bg-gradient-to-br from-[#1DAA61] to-[#3fc27b] text-white flex items-center gap-2 font-bold text-[13px] ring-2 ring-white shadow-lg shadow-[#1DAA61]/30 hover:shadow-xl hover:shadow-[#1DAA61]/40 hover:-translate-y-0.5 active:scale-95 transition-all duration-200 cursor-pointer overflow-visible"
+              translate="no" className="cart-btn group relative h-10 pl-3 pr-3 sm:pr-4 rounded-full bg-gradient-to-br from-[#1DAA61] to-[#3fc27b] text-white flex items-center gap-2 font-bold text-[13px] ring-2 ring-white shadow-lg shadow-[#1DAA61]/30 hover:shadow-xl hover:shadow-[#1DAA61]/40 hover:-translate-y-0.5 active:scale-95 transition-all duration-200 cursor-pointer overflow-visible"
               aria-label={`View cart${cartCount ? `, ${cartCount} items` : ''}`}
             >
-              <span key={cartHit} className={`db-cart-ico cart-ico ${cartHit ? 'hit' : ''} flex items-center justify-center w-6 h-6 rounded-full bg-white/20 group-hover:bg-white/30 transition-colors`}>
+              <span className={`db-cart-ico cart-ico ${cartPop ? 'hit' : ''} flex items-center justify-center w-6 h-6 rounded-full bg-white/20 group-hover:bg-white/30 transition-colors`}>
                 <ShoppingCart className="w-[18px] h-[18px]" strokeWidth={2.3} />
               </span>
               <span className="hidden sm:inline">Cart</span>
               {cartCount > 0 && (
-                <span key={cartCount} className="cart-badge absolute -top-1.5 -right-1.5 bg-[#f59e0b] text-white font-black text-[10px] min-w-[18px] h-[18px] rounded-full flex items-center justify-center px-1 border-2 border-white shadow">
+                <span className={`cart-badge ${cartPop ? 'pop' : ''} absolute -top-1.5 -right-1.5 bg-[#f59e0b] text-white font-black text-[10px] min-w-[18px] h-[18px] rounded-full flex items-center justify-center px-1 border-2 border-white shadow`}>
                   {cartCount}
                 </span>
               )}
