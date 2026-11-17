@@ -264,9 +264,7 @@ select.sel-low { border-color: var(--amber); } select.sel-out { border-color: va
 .seg button.on { background: var(--brand); color: #fff; }
 .stock-preview { margin-top: 6px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.85rem; }
 
-
 /* ---------- thumbnails ---------- */
-
 .thumb {
   width: 48px;
   height: 48px;
@@ -309,20 +307,13 @@ select.sel-low { border-color: var(--amber); } select.sel-out { border-color: va
   transition: opacity 0.3s ease;
 }
 
-.thumb img.ok {
-  opacity: 1;
-}
+.thumb img.ok { opacity: 1; }
 
 .thumb.loading {
   padding: 0 !important;
   display: grid !important;
   place-items: center !important;
-  background: linear-gradient(
-    100deg,
-    var(--surface-2) 30%,
-    var(--mint) 50%,
-    var(--surface-2) 70%
-  );
+  background: linear-gradient(100deg, var(--surface-2) 30%, var(--mint) 50%, var(--surface-2) 70%);
   background-size: 200% 100%;
   animation: shimmer 1.4s linear infinite;
 }
@@ -365,39 +356,57 @@ select.sel-low { border-color: var(--amber); } select.sel-out { border-color: va
 
 .pcard.inactive { opacity: 0.6; }
 
-/* All product image frames have exactly the same dimensions */
+/* Uniform product image frames */
 .pcard-img {
   position: relative;
+  display: block;
   width: 100%;
-  height: 170px;
-  min-height: 170px;
-  flex: 0 0 170px;
+  height: 180px;
+  min-height: 180px;
+  max-height: 180px;
+  flex: 0 0 180px;
+  aspect-ratio: 1 / 1;
   border-radius: 14px;
   background: radial-gradient(circle at 50% 40%, var(--mint) 0%, var(--surface-2) 75%);
   overflow: hidden;
   margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-/* Keep the complete product visible without cutting or stretching */
-.pcard-img img {
+/* ProductImage fills the frame; image keeps original proportions */
+.pcard-img > .thumb.fill {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.pcard-img > .thumb.fill img {
+  position: absolute;
+  inset: 0;
+  display: block;
   width: 100%;
   height: 100%;
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  object-position: center center;
-  display: block;
-  padding: 10px;
+  object-position: center;
+  padding: 12px;
+  margin: 0;
   box-sizing: border-box;
-  transition: transform 0.3s ease;
+  transform: none;
 }
 
-/* Prevent hover zoom from cutting the product */
-.pcard:hover .pcard-img img {
-  transform: scale(1.04);
+.pcard:hover .pcard-img > .thumb.fill img {
+  transform: scale(1.02);
 }
 
 .pcard h3 {
@@ -435,6 +444,7 @@ select.sel-low { border-color: var(--amber); } select.sel-out { border-color: va
   position: absolute;
   top: 8px;
   right: 8px;
+  z-index: 2;
   font-size: 0.7rem;
   font-weight: 700;
   padding: 3px 9px;
@@ -635,13 +645,13 @@ select.sel-low { border-color: var(--amber); } select.sel-out { border-color: va
   }
 
   .pcard-img {
-    width: 100%;
-    height: 140px;
-    min-height: 140px;
-    flex-basis: 140px;
+    height: 150px;
+    min-height: 150px;
+    max-height: 150px;
+    flex-basis: 150px;
   }
 
-  .pcard-img img {
+  .pcard-img > .thumb.fill img {
     padding: 8px;
   }
 
@@ -683,52 +693,16 @@ select.sel-low { border-color: var(--amber); } select.sel-out { border-color: va
 @media (prefers-reduced-motion: reduce) {
   .insight, .page .grid-eq > .card { animation: none; }
 }
-/* FIX: Admin product images showing half */
-.pcard-img {
-  width: 100% !important;
-  height: 180px !important;
-  min-height: 180px !important;
-  max-height: 180px !important;
-  overflow: hidden !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  position: relative !important;
-  padding: 0 !important;
-}
-
-.pcard-img img {
-  display: block !important;
-  width: 100% !important;
-  height: 100% !important;
-  max-width: 100% !important;
-  max-height: 100% !important;
-  object-fit: contain !important;
-  object-position: center center !important;
-  position: static !important;
-  transform: none;
-  padding: 10px !important;
-  margin: 0 !important;
-  box-sizing: border-box !important;
-  flex-shrink: 0 !important;
-  clip-path: none !important;
-}
-
-.pcard:hover .pcard-img img {
-  transform: scale(1.03) !important;
-}
-
-@media (max-width: 600px) {
-  .pcard-img {
-    height: 150px !important;
-    min-height: 150px !important;
-    max-height: 150px !important;
-  }
-}
-
 /* FINAL FIX: product picture always fully visible (square frame, picture centred with a little space around it) */
 .pcard .pcard-img { position: relative !important; display: block !important; width: 100% !important; height: auto !important; min-height: 0 !important; max-height: none !important; flex: none !important; aspect-ratio: 1 / 1 !important; overflow: hidden !important; padding: 0 !important; }
 .pcard .pcard-img .thumb { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; padding: 0 !important; border: 0 !important; border-radius: 0 !important; background: transparent !important; }
 .pcard .pcard-img .thumb img { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; max-width: none !important; max-height: none !important; padding: 12px !important; margin: 0 !important; object-fit: contain !important; object-position: center !important; box-sizing: border-box !important; }
 .pcard .pcard-img .pill { z-index: 2; }
 @media (max-width: 600px) { .pcard .pcard-img { height: auto !important; min-height: 0 !important; max-height: none !important; } }
+
+/* EQUAL LOOK: every picture sits on the same white square, so white boxes inside the photos disappear and all cards look balanced */
+.pcard .pcard-img { background: #ffffff !important; border: 1px solid var(--line) !important; border-radius: 14px !important; }
+.pcard .pcard-img .thumb img { mix-blend-mode: multiply; padding: 10px !important; transform: var(--fit, none) !important; transition: transform 0.25s ease; }
+.pcard:hover .pcard-img .thumb img { transform: var(--fit, none) !important; }
+.pcard .pcard-img .thumb-fallback { background: #f4f8f3 !important; }
+:root[data-theme='dark'] .pcard .pcard-img .thumb img { mix-blend-mode: normal; }
