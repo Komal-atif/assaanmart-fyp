@@ -704,6 +704,10 @@ def detect_families(text: str):
                 m = re.search(rf"(?<![a-z]){re.escape(a)}(?:s|es)?(?![a-z])", low)
                 at = m.start() if m else -1
             else:
+                if a == "ایل" and re.search(r"(ایم|ملی)\s*ایل", text):      # "250 ایم ایل" is ml, not oil
+                    continue
+                if a == "گی" and len(re.findall(r"\w+", text)) > 1:      # "گی" alone is how STT writes ghee; inside a sentence it is "لوں گی" (will take)
+                    continue
                 at = find_native(text, a)
             if at < 0:
                 continue
@@ -1091,6 +1095,8 @@ NUM_WORDS = {
     "six": 6, "chay": 6, "cheh": 6, "چھ": 6, "seven": 7, "saat": 7, "سات": 7, "eight": 8, "aath": 8, "آٹھ": 8,
     "nine": 9, "nau": 9, "نو": 9, "ten": 10, "das": 10, "دس": 10, "dozen": 12, "darjan": 12, "درجن": 12,
     "half": 0.5, "aadha": 0.5, "adha": 0.5, "آدھا": 0.5,
+    "ون": 1, "ٹو": 2, "تھری": 3, "فور": 4, "فائیو": 5, "سکس": 6, "سیون": 7, "ایٹ": 8, "نائن": 9,
+    "ٹوئنٹی": 20, "تھرٹی": 30, "فورٹی": 40, "ففٹی": 50, "سکسٹی": 60, "سیونٹی": 70, "ایٹی": 80, "نائنٹی": 90,
 }
 
 YES = {"yes", "yeah", "yep", "confirm", "confirmed", "ok", "okay", "sure", "haan", "han", "ji", "jee", "theek",
@@ -1100,8 +1106,9 @@ DONE = {"bas", "بس", "nothing", "enough", "done", "that's all", "thats all", "
 CANCEL = {"cancel", "منسوخ", "کینسل"}
 MORE = {"next", "more", "aur", "agla", "agli", "mazeed", "mazid", "aage", "اور", "اگلا", "اگلی", "مزید", "آگے", "نیکسٹ", "ہور"}
 SET_WORDS = ["kar do", "kardo", "change", "update", "badal", "کر دو", "کردو", "بدل"]
-ORDINALS = [(["first", "pehla", "pehli", "1st", "پہلا", "پہلی"], 0), (["second", "doosra", "doosri", "2nd", "دوسرا", "دوسری"], 1),
-            (["third", "teesra", "teesri", "3rd", "تیسرا", "تیسری"], 2)]
+ORDINALS = [(["first", "pehla", "pehli", "1st", "پہلا", "پہلی", "پہلے", "فرسٹ"], 0),
+            (["second", "doosra", "doosri", "2nd", "دوسرا", "دوسری", "دوسرے", "سیکنڈ"], 1),
+            (["third", "teesra", "teesri", "3rd", "تیسرا", "تیسری", "تیسرے", "تھرڈ"], 2)]
 CHEAP = ["sasta", "sasti", "saste", "sastay", "sasta wala", "cheap", "cheaper", "cheapest", "budget", "low price", "lowest price",
          "kam qeemat", "kam price", "kam rate", "kam daam", "کم قیمت", "کم ریٹ", "کم دام", "سستا", "سستی", "سستے", "سستی والا", "سستا والا"]
 EXPENSIVE = ["mehenga", "mehnga", "mehngi", "mehnge", "premium", "expensive", "best", "acha", "highest price", "top quality",
@@ -1399,7 +1406,8 @@ async def handle_brand(utt, lang):
 
 _UR_MAP = str.maketrans({"ك": "ک", "ي": "ی", "ى": "ی", "ے": "ی", "ۓ": "ی", "ئ": "ی", "آ": "ا", "ؤ": "و", "ۃ": "ہ", "ھ": "", "ٔ": ""})
 _UR_STOP = {"مجھے", "چاہیے", "چاہئے", "چاہیں", "کا", "کی", "کے", "کو", "ایک", "دو", "تین", "چار", "پانچ", "اور", "والا", "والی",
-            "والے", "دیں", "دیجیے", "کر", "ہے", "ہیں", "میں", "سے", "ہی", "بھی", "ذرا", "plz", "mujhe", "chahiye", "chahie", "aur", "ka", "ki", "ke"}
+            "والے", "دیں", "دیجیے", "کر", "ہے", "ہیں", "میں", "سے", "ہی", "بھی", "ذرا", "plz", "mujhe", "chahiye", "chahie", "aur", "ka", "ki", "ke",
+            "لوں", "گی", "گا", "گے", "لونگی", "لونگا", "لیں", "لے", "لو", "لیجیے", "کروں", "کریں", "کرنا", "نمبر", "والا", "جی"}
 
 
 _PHON = str.maketrans({"ٹ": "ت", "ط": "ت", "ث": "س", "ص": "س", "ذ": "ز", "ض": "ز", "ظ": "ز", "ڈ": "د", "ڑ": "ر", "ق": "ک", "غ": "گ", "ں": "ن"})
@@ -1513,12 +1521,24 @@ def _tok_keys(w):
     return ([("T", tight)] if len(tight) >= 3 else []) + [_tok_skel(w)]
 
 
+# Everyday talk words that can also sit inside ONE product's name ("Candyland NOW Chocolate"). They must never point to a
+# product family: "can we talk in English NOW" is a language request, not an order for chocolate.
+# Units spelled out letter by letter in Urdu script ("250 ایم ایل" = 250 ml, "کے جی" = kg): never an item
+URDU_LETTER_UNITS = {"ایم", "ایل", "ملی", "ملیلیٹر", "ملی لیٹر", "جی", "جی ایم", "کے", "کے جی", "ایم جی", "ایم ایل", "لٹر", "لیٹرز", "گرامز"}
+
+COMMON_EN = {"now", "then", "today", "tomorrow", "again", "here", "there", "back", "talk", "speak", "english", "urdu",
+             "language", "can", "could", "we", "you", "us", "our", "with", "from", "what", "when", "where", "how", "why",
+             "which", "who", "let", "lets", "tell", "say", "said", "time", "also", "still", "even", "ever", "never",
+             "already", "soon", "later", "first", "last", "thank", "thanks", "ready", "done", "start", "stop", "wait",
+             "again", "continue", "proceed", "move", "go", "going", "come", "bye", "hello", "sure", "maybe", "really"}
+
+
 def build_token_index():
     global _INDEX_READY
     TOKEN_INDEX.clear()
     for p in PRODUCTS.values():
         blob = " ".join([p["name"], p.get("aliases", ""), p.get("brand_ur", ""), p["brand"], " ".join(LEARNED.get(p["id"], {}))])
-        words_ = set(_tokens(blob))
+        words_ = {w for w in set(_tokens(blob)) if w.lower() not in COMMON_EN}
         for phrase in [p.get("brand_ur", "")] + re.split(r"[;,،]", p.get("aliases", "")):     # "کوکا کولا" is also said as one word
             tk_ = [w for w in _tokens(phrase) if not w.isascii()]
             words_ |= {tk_[i] + tk_[i + 1] for i in range(len(tk_) - 1)}
@@ -1559,7 +1579,7 @@ def infer_families(text, known):
     to text spelled them differently ("پیش" / "پیسٹ", "کال گیٹ" = Colgate). -> [(family, position)] for NEW families."""
     if not _INDEX_READY:
         build_token_index()
-    skip = set(FILLER) | set(NUM_WORDS) | set(UNIT_CANON) | _UR_STOP | set(_ONES) | set(_TENS) | _SAU | GENERIC_DESCRIBERS
+    skip = set(FILLER) | set(NUM_WORDS) | set(UNIT_CANON) | _UR_STOP | set(_ONES) | set(_TENS) | _SAU | GENERIC_DESCRIBERS | COMMON_EN | URDU_LETTER_UNITS
     toks = [(m_.group(), m_.start()) for m_ in re.finditer(r"[\w]+", text.lower().translate(ARABIC_DIGITS)) if len(m_.group()) >= 2]
     score, first, sure = {}, {}, set()
 
@@ -1774,7 +1794,7 @@ _TENS = {"ten": 10, "das": 10, "دس": 10, "twenty": 20, "bees": 20, "بیس": 2
          "پچاس": 50, "ففٹی": 50, "sixty": 60, "saath": 60, "ساٹھ": 60, "سکسٹی": 60, "seventy": 70, "sattar": 70,
          "ستر": 70, "سیونٹی": 70, "eighty": 80, "assi": 80, "اسی": 80, "ایٹی": 80, "ninety": 90, "nabbe": 90, "نوے": 90,
          "نائنٹی": 90}
-_SAU = {"sau", "سو", "hundred", "ہنڈرڈ"}
+_SAU = {"sau", "سو", "hundred", "ہنڈرڈ", "ہنڈریڈ", "ہنڈرید"}
 
 
 def spoken_to_digits(text):
@@ -1892,12 +1912,13 @@ def _words_point_to(p, options, text):
     return bool((mine - others) & heard)
 
 
-QR_RUPEE = re.compile(r"\brs\.?(?![a-z])|\brupee|\brupay|\brupiy|\bpkr\b|روپ|ریال", re.I)
+QR_RUPEE = re.compile(r"\brs\.?(?![a-z])|\brupee|\brupay|\brupiy|\brupees|\bpkr\b|روپ|رپ[یے]|رُپ|ریال", re.I)
 
 
 def match_by_price(text, options):
     """"fifty rupees pack" / "50 rupay wala" / "پچاس روپے والا" = the option that costs 50 (or is named 'Rs 50 Pack').
     Only used when the customer says a money word, so a plain '50' is never taken for a price."""
+    text = re.sub("[\u064B-\u065F\u0670]", "", text or "")          # the speech-to-text sometimes adds vowel marks (فِفٹی)
     money_word = bool(QR_RUPEE.search(text.lower()))
     am = parse_amount(text)
     if am is None or am.has_unit or am.value <= 0:
@@ -1909,6 +1930,12 @@ def match_by_price(text, options):
     # no money word ("the seventy pack", or STT wrote "seventy two piece pack"): only for options named by their price ("Rs 70 Pack")
     if n >= 5 and any(re.search(r"\brs\.?\s*\d+", v["name"], re.I) for v in options):
         return named
+    # just "fifty" while the packs cost 30 and 50 and no pack is a "50 g / 50 ml" one: it can only mean the price
+    if n >= 10 and not am.has_unit:
+        by_price = [v for v in options if abs(float(v["price"]) - n) < 0.5]
+        sized = any(n in {p[0] for p in size_pairs(v["name"] + " " + v.get("size", ""))} for v in options)
+        if len(by_price) == 1 and len(options) > 1 and not sized:
+            return by_price
     return []
 
 
@@ -1997,6 +2024,9 @@ QR_NUM_WORDS = {
     "بیس": 20, "تیس": 30, "چالیس": 40, "ساٹھ": 60, "ستر": 70, "اسی": 80, "نوے": 90,
     "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "pachas": 50, "pachaas": 50, "پچاس": 50, "bees": 20, "bis": 20, "tees": 30, "chalis": 40,
     "sawa": 1.25, "سوا": 1.25, "paune": 0.75, "pauna": 0.75, "پونے": 0.75,
+    # Urdu-script English ("ٹو ہنڈریڈ گرام", "ففٹی روپیز") - speech-to-text writes English words in Urdu letters
+    "ون": 1, "ٹو": 2, "تھری": 3, "فور": 4, "فائیو": 5, "سکس": 6, "سیون": 7, "ایٹ": 8, "نائن": 9,
+    "ٹوئنٹی": 20, "تھرٹی": 30, "فورٹی": 40, "ففٹی": 50, "سکسٹی": 60, "سیونٹی": 70, "ایٹی": 80, "نائنٹی": 90,
 }
 
 # unit word -> (canonical unit, dimension, multiplier to the base of that dimension)
@@ -2042,7 +2072,7 @@ def _qr_fmt(n: float) -> str:
     return str(int(n)) if float(n).is_integer() else (f"{n:.2f}".rstrip("0").rstrip("."))
 
 
-QR_MULT = {"hundred": 100, "sau": 100, "سو": 100, "thousand": 1000, "hazar": 1000, "hazaar": 1000, "ہزار": 1000}
+QR_MULT = {"ہنڈریڈ": 100, "ہنڈرڈ": 100, "ہنڈرید": 100, "ہنڈرِڈ": 100, "hundred": 100, "sau": 100, "سو": 100, "thousand": 1000, "hazar": 1000, "hazaar": 1000, "ہزار": 1000}
 
 
 def _qr_words(text: str) -> list[str]:
@@ -2237,7 +2267,7 @@ def key_info(text: str, max_words: int = 18) -> dict:
 BASE_UNITS = {"kg": ("mass", 1000), "g": ("mass", 1), "l": ("vol", 1000), "ml": ("vol", 1)}
 
 
-HUNDRED_WORDS = {"hundred", "sau", "so", "سو", "سَو"}
+HUNDRED_WORDS = {"hundred", "sau", "so", "سو", "سَو", "ہنڈریڈ", "ہنڈرڈ", "ہنڈرید"}
 
 
 def numwords_to_digits(text):
@@ -2935,9 +2965,13 @@ SKIP_PHRASES = ["skip", "chor do", "chhor do", "chodo", "rehne do", "reh do", "l
                 "چھوڑ دو", "چھوڑیں", "رہنے دو", "نہیں لینا", "no thanks"]
 
 
+ORDER_FINISH_RE = re.compile(r"(place|confirm|finish|complete|submit|checkout|check out)\W+(my\W+|the\W+)?(whole\W+)?order|order\W+(place|confirm)|"
+                             r"آرڈر\s*(کنفرم|پلیس|مکمل)|(کنفرم|پلیس)\s*(کر|کریں|کردیں).*آرڈر", re.I)
+
+
 def wants_finish(text):
     """'that's all, confirm what I have' — said while an item is still being chosen: stop asking, go to the order."""
-    return has_any(text, FINISH_PHRASES) or has_any(text, FINISH_WORDS)
+    return has_any(text, FINISH_PHRASES) or has_any(text, FINISH_WORDS) or bool(ORDER_FINISH_RE.search(text or ""))
 
 
 def wants_skip(text):
@@ -4115,9 +4149,30 @@ def repair_fused_words(text):
     return " ".join(out)
 
 
+PAYMENT_RE = re.compile(
+    r"jazz\s*cash|jazzcash|easy\s*paisa|easypaisa|easy\s*paise|nayapay|naya\s*pay|sadapay|sada\s*pay|raast|bank\s*(transfer|account|card)|"
+    r"credit\s*card|debit\s*card|master\s*card|mastercard|\bvisa\b|\bcard\b|card\s*number|online\s*(payment|pay|transfer)|pay\s*(online|by\s*card|with\s*card)|"
+    r"paypal|wallet|"
+    r"جاز\s*کیش|جازکیش|ایزی\s*پیسہ|ایزی\s*پیسے|ایزی\s*پیسا|ایزی\s*پیسہ|نیا\s*پے|سادہ\s*پے|کریڈٹ|ڈیبٹ|کارڈ|ماسٹر\s*کارڈ|ویزا|بینک|آن\s*لائن\s*(پیمنٹ|ادائیگی|ٹرانسفر)|ادائیگی\s*آن\s*لائن|ڈیجیٹل\s*والیٹ|والٹ",
+    re.I)
+
+
+_LETTER_UNITS = [(re.compile(r"(?<![\u0600-\u06FF])ایم\s*ایل(?![\u0600-\u06FF])"), "ml"), (re.compile(r"(?<![\u0600-\u06FF])ملی\s*لیٹرز?(?![\u0600-\u06FF])"), "ml"),
+                 (re.compile(r"(?<![\u0600-\u06FF])کے\s*جی(?![\u0600-\u06FF])"), "kg"), (re.compile(r"(?<![\u0600-\u06FF])جی\s*ایم(?![\u0600-\u06FF])"), "g"),
+                 (re.compile(r"(?<![\u0600-\u06FF])کلو\s*گرامز?(?![\u0600-\u06FF])"), "kg")]
+
+
+def norm_letter_units(text):
+    """Units that speech-to-text spells letter by letter in Urdu script: "250 ایم ایل" -> "250 ml", "2 کے جی" -> "2 kg"."""
+    for rx, rep in _LETTER_UNITS:
+        text = rx.sub(rep, text or "")
+    return text
+
+
 async def route_utterance(utt: Utterance, history: list, lang: str):
     """Decides what to say. Returns (display_text, speech_text)."""
     global order_pending_confirmation, current, language_chosen
+    utt.ur, utt.en = norm_letter_units(utt.ur), norm_letter_units(utt.en)
     both = utt.both
 
     # -1. the agent has just asked "English or Urdu?" -> this is the answer
@@ -4129,6 +4184,19 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
             return m, m
         # (otherwise the user already started ordering: language was picked from what they spoke, carry on)
 
+    # -0.5 other ways of paying (JazzCash, Easypaisa, card ...): only Cash on Delivery exists. Never take card numbers.
+    if PAYMENT_RE.search(both):
+        if order_pending_confirmation:
+            tail = t(lang, " Say yes to confirm your order with cash on delivery, or no to cancel.",
+                     " کیش آن ڈیلیوری کے ساتھ آرڈر کنفرم کرنے کے لیے ہاں کہیں، یا منسوخ کرنے کے لیے نہیں۔")
+        else:
+            tail = t(lang, " Please go on with your order.", " براہِ کرم اپنا آرڈر جاری رکھیں۔")
+        m = t(lang, "Sorry, right now we only accept Cash on Delivery. You pay the rider when your order arrives. "
+                    "Please do not say any card or account number." + tail,
+              "معذرت، فی الحال صرف کیش آن ڈیلیوری دستیاب ہے۔ آرڈر پہنچنے پر آپ رائیڈر کو ادائیگی کر دیں۔ "
+              "براہِ کرم کوئی کارڈ یا اکاؤنٹ نمبر نہ بولیں۔" + tail)
+        return m, m
+
     # 0. the user just asked to change language -> confirm in the NEW language and carry on
     if utt.switched and not detect_for_utt(utt):
         msg = t(lang, "Sure, I'll speak English from now on. ", "جی ضرور، اب میں آپ سے اردو میں بات کروں گی۔ ")
@@ -4137,6 +4205,11 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
             return msg + d, msg + s_
         m = msg + t(lang, "What would you like?", "آپ کو کیا چاہیے؟")
         return m, m
+
+    # 0-finish. "now confirm my order" / "place my order" while an item is still being chosen: always go to the order.
+    # (Must come before everything that looks at product words: "NOW" is also a chocolate brand.)
+    if not order_pending_confirmation and (current is not None or queue) and wants_finish(both) and not has_any(both, NO):
+        return finish_now(lang)
 
     # 0a. the customer asks for a brand that is in the dataset but not for sale right now -> say so honestly
     gone = find_unavailable(both)
@@ -4199,12 +4272,18 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
             pool_words |= set(tokens(_product_blob(p_)))
         def _is_answer_words(r):
             ws = [w for w in tokens(r.get("clause") or "") if len(w) >= 3]
-            if bool(ws) and sum(w in pool_words for w in ws) >= len(ws) * 0.5:
-                return True
+            if bool(ws) and sum((w in pool_words) or any(_tok_strength(w, t_) >= 0.8 for t_ in pool_words) for w in ws) >= len(ws) * 0.5:
+                return True                              # (Urdu-script spellings of the product's words count too)
             # "Zero SUGAR can" while choosing a cola: the family word is part of the product's name, no amount was said
             fam_ws = [w for w in tokens(r["pair"][0]) if len(w) >= 3]
             return bool(fam_ws) and all(w.rstrip("s") in {x.rstrip("s") for x in pool_words} for w in fam_ws) and not r.get("qty")
         reqs = [r for r in reqs if not _is_answer_words(r)]
+        # "full cream milk 250 ml" (any spelling) while the packs 250 ml / 1000 ml are on offer = the answer, not a new item
+        if reqs and stage == "variant" and not re.search(r"\b(and|also|too|plus|aur|bhi)\b|اور|بھی|ساتھ", both.lower()):
+            want_ = size_pairs(both, spoken=True)
+            if want_ and any(same_size(want_, size_pairs(v["name"] + " " + v["size"]))
+                             for v in (current.get("all_variants") or current.get("variants") or [])):
+                reqs = []
         pre = ""
         if reqs:
             rest = residual_utterance(utt, {r["pair"] for r in reqs})
