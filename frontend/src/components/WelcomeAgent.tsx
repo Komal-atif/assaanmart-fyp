@@ -31,8 +31,6 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
   const stageRef = useRef<WelcomeStage>('language');
   const langRef = useRef<Lang>('english');
   const tokenRef = useRef(0);
-  const bargedRef = useRef(false);
-  const bargeOkRef = useRef(false);
   const propsRef = useRef({ onVoice, onLanguage });
   propsRef.current = { onVoice, onLanguage };
 
@@ -49,10 +47,7 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
         resolve(ok);
       };
       resolverRef.current = () => finish(true);
-      a.onplaying = () => {
-        setPhase('speaking');
-        if (bargeOkRef.current && activeRef.current) voice.listen({ bargeIn: true });
-      };
+      a.onplaying = () => setPhase('speaking');
       a.onended = () => finish(true);
       a.onerror = () => finish(true);
       a.src = url.startsWith('http') ? url : `${getBackendUrl()}${url}`;
@@ -82,24 +77,15 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
     voice.listen();
   };
 
-    // pehle agent bolta hai phir customer ki baat sunta hai
+  // pehle agent bolta hai phir customer ki baat sunta hai
   const speakThenListen = async (url: string, listen = true) => {
     const my = ++tokenRef.current;
     voice.pause();
-    bargedRef.current = false;
-    bargeOkRef.current = listen;
     setPhase('thinking');
     const ok = await play(url);
-    bargeOkRef.current = false;
     if (!ok) {
       setPhase('idle');
       return false;
-    }
-    // agar customer beech mein bol para to dobara sunna shuru nahi karna
-    if (bargedRef.current) {
-      bargedRef.current = false;
-      if (my === tokenRef.current) setPhase('listening');
-      return true;
     }
     await new Promise((r) => setTimeout(r, 350));
     if (my !== tokenRef.current) return true;
@@ -186,10 +172,6 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
 
   const voice = useVoiceLoop({
     onUtterance: handleUtterance,
-    onBargeIn: () => {
-      bargedRef.current = true;
-      stopSpeech();
-    },
   });
 
   // page khulte hi welcome
