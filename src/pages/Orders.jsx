@@ -90,7 +90,7 @@ export default function Orders() {
           return (
             <>
               <div className="page-head">
-                <div><h1>Orders</h1><p>View and manage all customer orders.</p></div>
+                <div><h1>Orders</h1></div>
                 <div className="head-actions">
                   <Button variant="ghost" icon="download" onClick={exportCsv} disabled={rows.length === 0}>Export</Button>
                   <Button icon="filter" onClick={() => setPanel(!panel)} className={filtered ? 'has-filter' : ''}>Filter</Button>

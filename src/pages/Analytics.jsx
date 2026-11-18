@@ -33,7 +33,7 @@ export default function Analytics() {
   return (
     <div className="page">
       <div className="page-head">
-        <div><h1>Analytics</h1><p>Sales, orders and stock, calculated from your data.</p></div>
+        <div><h1>Analytics</h1></div>
         <div className="chips">
           <button className={`icon-btn round refresh ${state.loading ? 'spin' : ''}`} onClick={state.reload} aria-label="Refresh" title={`Updated ${updated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}><Icon name="refresh" size={17} /></button>
           <Button variant="ghost" icon="download" size="sm" onClick={exportCsv} disabled={!state.data?.a.hasPeriodOrders}>Export</Button>

@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
 import useAsync from '../hooks/useAsync'
-import { hasAdmin, resetAdminAccount } from '../services/authService'
+import { getAdminSetup } from '../services/authService'
 import Icon from '../components/ui/Icon'
 import Logo from '../components/ui/Logo'
 import Button from '../components/ui/Button'
@@ -14,7 +14,8 @@ const REMEMBER = 'assanmart:rememberEmail'
 export default function Login() {
   const { admin, ready, login, register } = useAuth()
   const toast = useToast()
-  const setup = useAsync(hasAdmin)
+  const setup = useAsync(getAdminSetup)
+  const [wantCreate, setWantCreate] = useState(false)
   const [form, setForm] = useState({ name: '', email: localStorage.getItem(REMEMBER) || '', password: '' })
   const [remember, setRemember] = useState(!!localStorage.getItem(REMEMBER))
   const [show, setShow] = useState(false)
@@ -30,7 +31,7 @@ export default function Login() {
 
   if (ready && admin) return <Navigate to="/dashboard" replace />
 
-  const creating = setup.data === false // no admin exists yet -> first-time setup
+  const creating = setup.data ? (!setup.data.exists || wantCreate) : false // first-time setup, or 'Create account' chosen
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
   async function submit(e) {
@@ -49,11 +50,8 @@ export default function Login() {
   }
 
   async function doReset() {
-    await resetAdminAccount()
     setForgot(false)
-    setForm({ name: '', email: '', password: '' })
-    setup.reload()
-    toast('Admin account removed. Create a new one below.')
+    toast('Reset the password in Supabase (Authentication -> Users), or create a new admin account.')
   }
 
   return (
@@ -109,8 +107,14 @@ export default function Login() {
               )}
               {error && <div className="notice" role="alert">{error}</div>}
               <Button type="submit" wide loading={busy} className="login-btn">{busy ? 'Signing in…' : creating ? 'Create account' : 'Login'}</Button>
-              {!creating && (
-                <p className="foot">Don’t have an account? <button type="button" className="link-btn" onClick={() => toast('Ask the store owner to create your admin account.')}>Contact admin</button></p>
+              {setup.data?.exists && setup.data?.open && (
+                <p className="foot">
+                  {creating ? 'Already have an account? ' : 'Don’t have an account? '}
+                  <button type="button" className="link-btn" onClick={() => { setWantCreate(!wantCreate); setError('') }}>{creating ? 'Log in' : 'Create account'}</button>
+                </p>
+              )}
+              {setup.data?.exists && !setup.data?.open && !creating && (
+                <p className="foot">Don’t have an account? <button type="button" className="link-btn" onClick={() => toast('Ask the store owner to give your account admin access.')}>Contact admin</button></p>
               )}
             </>
           )}
@@ -119,8 +123,8 @@ export default function Login() {
 
       {forgot && (
         <ConfirmModal icon="lock" tone="primary" title="Forgot your password?"
-          text="Admin accounts are saved in this browser only. You can remove the saved account and create a new one. Your products, stock and settings are not touched."
-          confirmLabel="Remove account" onCancel={() => setForgot(false)} onConfirm={doReset} />
+          text="Admin passwords live in Supabase. Open your Supabase project -> Authentication -> Users, and reset the password there."
+          confirmLabel="OK" onCancel={() => setForgot(false)} onConfirm={doReset} />
       )}
     </div>
   )

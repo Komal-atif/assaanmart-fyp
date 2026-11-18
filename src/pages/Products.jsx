@@ -74,7 +74,7 @@ export default function Products() {
           return (
             <>
               <div className="page-head">
-                <div><h1>Products</h1><p>Manage your product inventory and categories.</p></div>
+                <div><h1>Products</h1></div>
                 <div className="head-actions">
                   <label className="search-box"><Icon name="search" size={16} />
                     <input placeholder="Search products…" value={q} onChange={(e) => setParam('q', e.target.value)} aria-label="Search products" />

@@ -69,7 +69,7 @@ function ImagesCard({ sample }) {
   return (
     <form className="card" onSubmit={save}>
       <h2 className="mb">Product images</h2>
-      <p className="muted mb">Your Excel stores image paths like <code>/products/Dairy/Milk/325.png</code>. Put the pictures in <code>public/images/products/…</code> (same folders), or paste the website that serves them (for example your friend’s frontend).</p>
+      
       <div className="field">
         <label htmlFor="imgbase">Image website (optional)</label>
         <input id="imgbase" placeholder={IMAGE_BASE_URL || 'https://your-site.com'} value={url} onChange={(e) => setUrl(e.target.value)} />
@@ -93,7 +93,7 @@ export default function Settings() {
 
   return (
     <div className="page">
-      <div className="page-head"><div><h1>Settings</h1><p>Store details, stock alerts, images and your account.</p></div></div>
+      <div className="page-head"><div><h1>Settings</h1></div></div>
       <AsyncView state={state}>
         {({ limit, store, sample }) => (
           <div className="grid-eq">

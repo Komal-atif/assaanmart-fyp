@@ -50,9 +50,8 @@ export default function Dashboard() {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>Welcome, {admin?.name || 'Madeeha Naeem'}! <span className="wave" aria-hidden="true">👋</span></h1>
-          <p>Here’s what’s happening with your store today.</p>
-        </div>
+          <h1>Welcome, {admin?.name || 'Madeeha Naeem'}! </h1>
+         </div>
         <div className="head-actions">
           <button className={`icon-btn round refresh ${state.loading ? 'spin' : ''}`} onClick={state.reload} aria-label="Refresh" title={`Updated ${updated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}><Icon name="refresh" size={17} /></button>
           <div className="date-pill"><Icon name="calendar" size={15} />Today, {today}</div>

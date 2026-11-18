@@ -26,7 +26,7 @@ export default function Inventory() {
 
   return (
     <div className="page">
-      <div className="page-head"><div><h1>Inventory</h1><p>Stock level of every product. The voice agent uses these numbers to say “available” or “out of stock”.</p></div></div>
+      <div className="page-head"><div><h1>Inventory</h1></div></div>
       <AsyncView state={state}>
         {(items) => {
           const count = (s) => (s === 'all' ? items.length : items.filter((p) => p.stockStatus === s).length)

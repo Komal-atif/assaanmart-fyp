@@ -14,7 +14,7 @@ export default function Customers() {
   const [q, setQ] = useState('')
   return (
     <div className="page">
-      <div className="page-head"><div><h1>Customers</h1><p>People who ordered from AssanMart, built from your orders.</p></div></div>
+      <div className="page-head"><div><h1>Customers</h1></div></div>
       <AsyncView state={state}>
         {(list) => {
           const term = q.trim().toLowerCase()
