@@ -1,10 +1,4 @@
 import React from 'react';
-
-/* Animated assistant mascot (white-blue egg + visor).  States: idle | listening | talking | showing | happy.
-   Optional products can be held in the left / right hand. */
-
-
-/** one product card held up by the bot (SVG, so it moves with the bot) */
 const HeldCard: React.FC<{ item?: HeldItem | null; cx: number; cy: number; cls: string; fly?: boolean }> = ({ item, cx, cy, cls, fly }) => {
   const w = 118;
   const h = 142;
@@ -35,26 +29,17 @@ export interface HeldItem { image?: string | null; label?: string; price?: strin
 
 export type BotState = 'idle' | 'listening' | 'talking' | 'showing' | 'happy';
 
-/* ============================== MASCOT ============================== */
-
 interface AssistantBotProps {
   state?: BotState;
   className?: string;
-  /** flipper arms from the reference mascot (on by default) */
   showArms?: boolean;
-  /** little antenna from the reference mascot (off by default) */
   showAntenna?: boolean;
-  /** ground shadow under the bot (off when it sits inside a circle) */
   showShadow?: boolean;
-  /** crop, e.g. "430 225 380 520" for a tight head-and-body view */
   viewBox?: string;
-  /** a product held up in the left / right hand (used while the customer is choosing) */
   holdLeft?: HeldItem | null;
   holdRight?: HeldItem | null;
-  /** the item that was just added to the cart: it flies from the right hand to the basket */
   adding?: HeldItem | null;
 }
-
 export const AssistantBot: React.FC<AssistantBotProps> = ({ state = 'idle', className = 'w-full h-full', showArms = true, showAntenna = false, showShadow = true, viewBox = '335 170 600 670', holdLeft = null, holdRight = null, adding = null }) => (
   <svg
     className={`am-bot ${className}`}
@@ -68,34 +53,27 @@ export const AssistantBot: React.FC<AssistantBotProps> = ({ state = 'idle', clas
       .am-bot{display:block;overflow:visible}
       .am-bot *{transform-box:view-box}
 
-      /* floating + ground shadow */
       .am-bot .bot{animation:amB-float 3.2s ease-in-out infinite}
       .am-bot .shadow{transform-origin:633px 793px;animation:amB-shadow 3.2s ease-in-out infinite}
       @keyframes amB-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-24px)}}
       @keyframes amB-shadow{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.88);opacity:.75}}
 
-      /* antenna ball (only when showAntenna) */
       .am-bot .ball{transform-box:fill-box;transform-origin:center;animation:amB-pulse 2.4s ease-in-out infinite}
       @keyframes amB-pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}
 
-      /* blinking eyes */
       .am-bot .eyes{transform-box:fill-box;transform-origin:center;animation:amB-blink 5s infinite}
       @keyframes amB-blink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.08)}}
 
-      /* mouths: only one visible at a time */
       .am-bot .m-smile{opacity:1}
       .am-bot .m-talk,.am-bot .m-o,.am-bot .eyes-happy{opacity:0}
       .am-bot .m-talk{transform-box:fill-box;transform-origin:center}
 
-      /* flipper arms (only when showArms) */
       .am-bot .arm-l{transform-origin:520px 485px;animation:amB-wave 3.2s ease-in-out infinite}
       .am-bot .arm-r{transform-origin:520px 485px;transition:transform .45s cubic-bezier(.3,1.5,.5,1);animation:amB-wave 3.2s ease-in-out infinite}
       @keyframes amB-wave{0%,100%{transform:rotate(0)}50%{transform:rotate(6deg)}}
 
-      /* listening halo around the head */
       .am-bot .ring{opacity:0;fill:none;stroke:#20e0b9;stroke-width:6;transform-box:fill-box;transform-origin:center}
 
-      /* ---------------- LISTENING ---------------- */
       .am-bot[data-state=listening] .eyes{animation:none;transform:scale(1.2)}
       .am-bot[data-state=listening] .m-smile{opacity:0}
       .am-bot[data-state=listening] .m-o{opacity:1}
@@ -105,18 +83,15 @@ export const AssistantBot: React.FC<AssistantBotProps> = ({ state = 'idle', clas
       @keyframes amB-ring{0%{opacity:.85;transform:scale(1)}100%{opacity:0;transform:scale(1.4)}}
       @keyframes amB-tilt{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}}
 
-      /* ---------------- TALKING ---------------- */
       .am-bot[data-state=talking] .m-smile{opacity:0}
       .am-bot[data-state=talking] .m-talk{opacity:1;animation:amB-talk .26s ease-in-out infinite alternate}
       .am-bot[data-state=talking] .head{animation:amB-nod .7s ease-in-out infinite;transform-origin:617px 450px}
       @keyframes amB-talk{0%{transform:scaleY(.25) scaleX(.8)}100%{transform:scaleY(1.25) scaleX(1.05)}}
       @keyframes amB-nod{0%,100%{transform:translateY(0)}50%{transform:translateY(6px)}}
 
-      /* ---------------- SHOWING (looks toward the products) ---------------- */
       .am-bot[data-state=showing] .head{transform-origin:617px 450px;transform:rotate(8deg) translateX(8px);transition:transform .4s cubic-bezier(.3,1.5,.5,1)}
       .am-bot[data-state=showing] .arm-r{animation:none;transform:rotate(30deg)}
 
-      /* ---------------- HAPPY (item added) ---------------- */
       .am-bot[data-state=happy] .bot{animation:amB-hop .55s ease-out 2}
       .am-bot[data-state=happy] .eyes{opacity:0}
       .am-bot[data-state=happy] .eyes-happy{opacity:1}
@@ -125,7 +100,6 @@ export const AssistantBot: React.FC<AssistantBotProps> = ({ state = 'idle', clas
       @keyframes amB-hop{0%,100%{transform:translateY(0)}45%{transform:translateY(-70px)}}
       @keyframes amB-cheerL{0%{transform:rotate(12deg)}100%{transform:rotate(34deg)}}
 
-      /* ---------------- HOLDING PRODUCTS (both hands raised) ---------------- */
       .am-bot[data-hold=true] .arm-l,.am-bot[data-hold=true] .arm-r{animation:none;transform:rotate(36deg)}
       .am-bot .hold{opacity:0;transform-box:fill-box;transform-origin:center bottom;transform:translateY(34px) scale(.5);transition:opacity .35s,transform .5s cubic-bezier(.3,1.6,.5,1)}
       .am-bot .hold.on{opacity:1;transform:translateY(0) scale(1)}
@@ -157,21 +131,18 @@ export const AssistantBot: React.FC<AssistantBotProps> = ({ state = 'idle', clas
       </linearGradient>
     </defs>
 
-    {/* ground shadow: soft outer ellipse + solid inner core */}
     {showShadow && <g className="shadow">
       <ellipse cx="633" cy="793" rx="250" ry="38" fill="#dcedfc"/>
       <ellipse cx="635" cy="792" rx="92" ry="15" fill="#1583c6"/>
     </g>}
 
     <g className="bot">
-      {/* egg body: darker shell on the left, glossy highlights */}
       <path d="M545 458 L735 458 C765 490 780 540 772 600 C760 655 725 690 665 698 C625 700 580 695 545 675 C495 645 466 600 468 548 C470 505 505 470 545 458 Z" fill="#90c9f3"/>
       <path d="M541 462 L735 462 L758 505 C772 540 775 575 765 615 C752 650 730 672 698 686 C670 696 640 696 612 694 C585 690 565 678 552 662 C525 630 512 590 510 545 C510 510 520 482 541 462 Z" fill="url(#amBodyL)"/>
       <path d="M548 472 Q568 468 568 487 Q566 508 552 528 Q534 530 530 515 Q532 488 548 472 Z" fill="#fff" opacity=".92"/>
       <path d="M533 552 Q548 546 552 568 Q554 598 562 622 Q545 626 536 600 Q526 570 533 552 Z" fill="#fff" opacity=".5"/>
       <path d="M512 453 L735 453" stroke="#a2d0f4" strokeWidth="5" strokeLinecap="round"/>
 
-      {/* optional flipper arms */}
       {showArms && (
         <>
           <g className="arm-l"><path d="M404 433 C440 436 495 448 528 462 L525 478 L492 525 C455 512 410 485 390 452 C386 440 394 432 404 433 Z" fill="#8ec8f2"/>
@@ -183,7 +154,6 @@ export const AssistantBot: React.FC<AssistantBotProps> = ({ state = 'idle', clas
         </>
       )}
 
-      {/* products held in the hands */}
       <HeldCard item={holdLeft} cx={398} cy={392} cls="l" />
       <HeldCard item={holdRight} cx={856} cy={392} cls="r" />
       {adding && <HeldCard item={adding} cx={856} cy={392} cls="fly-wrap" fly />}

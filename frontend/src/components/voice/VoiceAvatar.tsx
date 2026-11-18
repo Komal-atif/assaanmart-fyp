@@ -39,7 +39,6 @@ export const VoiceAvatar: React.FC<VoiceAvatarProps> = ({ state, levelRef }) => 
       {/* Outer Glow Halo */}
       <div className="absolute inset-2 rounded-full bg-radial from-emerald-100/90 via-emerald-50/50 to-transparent transition-all duration-300" />
 
-      {/* Reactive Audio Rings for Listening */}
       <div
         className={`absolute inset-4 rounded-full border-2 border-emerald-500/40 pointer-events-none transition-opacity duration-200 ${
           state === 'listening' ? 'opacity-80' : 'opacity-0'

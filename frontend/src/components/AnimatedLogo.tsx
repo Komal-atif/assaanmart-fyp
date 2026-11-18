@@ -4,12 +4,6 @@ interface AnimatedLogoProps {
   className?: string;
 }
 
-/**
- * Small looping AssanMart logo for the header (vector, traced from the real logo).
- * Theme colours: dark green #064e3b (cart + groceries), emerald #059669/#10b981 (AM monogram glow).
- * Every 4 s the groceries hop one after another, the cart rocks forward and the AM glows.
- * Hover = the logo hops once more. Honors "reduce motion".
- */
 export const AnimatedLogo: React.FC<AnimatedLogoProps> = ({ className = 'w-full h-full' }) => (
   <svg className={`am-logo ${className}`} viewBox="20 20 616 600" role="img" aria-label="AssanMart">
     <style>{`

@@ -1,4 +1,3 @@
-// One rule for the whole store: at most 10 of any item, and never more than what is in stock.
 export const MAX_PER_ITEM = 10;
 export const LIMIT_MSG = 'You have reached the limit for this item';
 

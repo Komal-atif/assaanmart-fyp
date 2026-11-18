@@ -1,11 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X, ChevronRight, Mic, Volume2, Minus, Plus, Check } from 'lucide-react';
 
-/* The selection pop-up: brands, types, sizes and quantity are chosen here (tap), or just by speaking.
-   It opens by itself whenever the agent offers choices and closes when the choice is made. */
-
 interface Props {
-  options: any | null;                       // VoiceOptions from the server
+  options: any | null;                    
   phase: 'listening' | 'speaking' | 'thinking' | 'off' | string;
   onSelect: (value: string, qty?: number | null) => void;
 }
@@ -21,7 +18,6 @@ export const VoiceProductModal: React.FC<Props> = ({ options, phase, onSelect })
   const namesOnly = options?.stage === 'brand' || (items.length > 0 && !items.some((i: any) => i.image_url));
   const key = useMemo(() => JSON.stringify([options?.stage, options?.title, items.map((i) => i.value)]), [options, items]);
 
-  // a new set of choices always opens the pop-up again
   useEffect(() => { setHidden(false); setLimitMsg(false); setQty(Math.min(10, Math.max(1, Math.round(options?.suggested_qty ?? 1)))); }, [key]);
 
   const show = !!options && (items.length > 0 || isQty) && !hidden;

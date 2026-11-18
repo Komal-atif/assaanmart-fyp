@@ -34,9 +34,9 @@ interface StoreDashboardProps {
   onToggleFavorite?: (product: Product) => void;
 }
 
+// popular products ke ids
 const POPULAR_IDS = ["251", "256", "249", "250", "2", "325", "97", "83"];
 
-// Professional SVG Category Icon Helper (Zero Emojis)
 export const getCategoryIcon = (categoryName: string, className: string = "w-5 h-5") => {
   switch (categoryName) {
     case 'Fruits & Vegetables':
@@ -62,13 +62,7 @@ export const getCategoryIcon = (categoryName: string, className: string = "w-5 h
   }
 };
 
-/* ---------------------------------------------------------------------------
-   Category pictures (shown inside the round category buttons instead of icons).
-   Save the files in:   public/products/categories/
-   They are then served from  /products/categories/<file>
-   Square pictures (about 400 x 400 px) work best. To use .webp or .jpg, change CATEGORY_IMAGE_EXT.
-   If a picture is missing the old icon is shown, so nothing breaks while you add them.
---------------------------------------------------------------------------- */
+// category ki tasveerein public/products/categories folder mein hain
 const CATEGORY_IMAGE_DIR = '/products/categories';
 const CATEGORY_IMAGE_EXT = 'png';
 
@@ -85,7 +79,7 @@ const CATEGORY_IMAGES: Record<string, string> = {
   'Cooking & Baking': `${CATEGORY_IMAGE_DIR}/cooking-and-baking.${CATEGORY_IMAGE_EXT}`,
 };
 
-// any other category name becomes a file name automatically, e.g. "Home Care" -> home-care.png
+// category ke naam ko file ke naam mein badalta hai
 const slugify = (name: string) =>
   name.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
@@ -135,7 +129,6 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
 
   const [visibleCount, setVisibleCount] = useState(30);
 
-  // the header's "How it works" link asks us to leave any search / category so the section is on screen
   React.useEffect(() => {
     const reset = () => { setSelectedCategory(null); setSelectedSubcategory(null); onSearchChange(''); };
     window.addEventListener('assanmart:show-home', reset);
@@ -148,6 +141,7 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
     return categories.find((c) => c.name === selectedCategory);
   }, [categories, selectedCategory]);
 
+  // category, aisle aur search ke hisab se products filter aur sort
   const filteredProducts = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
 
@@ -194,6 +188,7 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
 
   const showSpecificResults = Boolean(selectedCategory || searchTerm.trim());
 
+  // pehle favourites phir baqi popular products
   const popularProducts = useMemo(() => {
     const favs = favorites
       .map((id) => products.find((p) => p.id === id))
@@ -215,11 +210,9 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
   return (
     <div className="bg-transparent min-h-screen pb-20 font-sans selection:bg-[#e0f4e7] selection:text-[#2a6b43]">
       
-      {/* Sleek, Compact Single-Line Bar for "Browse Full Store" + "Sort by Size/Order" */}
       <div className="sticky top-14 sm:top-16 z-30 bg-white/95 backdrop-blur-md border-b border-[#e0f4e7] py-2 px-3 sm:px-6 shadow-2xs">
         <div className="max-w-[1360px] mx-auto flex flex-wrap items-center justify-between gap-2">
           
-          {/* Left: Active Category / Filter Status */}
           <div className="flex items-center gap-2 min-w-0 max-w-full">
             {selectedCategory ? (
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#f3fbf6] border border-[#b3e4c4] text-xs font-bold text-[#2a6b43]">
@@ -252,7 +245,6 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
             )}
           </div>
 
-          {/* Right: Compact "Sort by Size/Order" single line dropdown */}
           <div className="flex items-center gap-2 ml-auto max-w-full">
             <div className="flex items-center gap-1.5 bg-white border border-[#e0f4e7] rounded-full px-3 py-1 text-xs transition-colors hover:border-[#1daa61]">
               <ArrowUpDown className="w-3 h-3 text-[#2a6b43] animate-bounce" style={{ animationDuration: '2s' }} />
@@ -278,7 +270,6 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
 
       <div className="max-w-[1360px] mx-auto px-3 sm:px-6 pt-5 space-y-7">
         
-        {/* Promotional Showcase Hero Banner */}
         <div
           onClick={() => onOpenVoice?.()}
           className="relative w-full overflow-hidden rounded-2xl sm:rounded-3xl border border-[#e0f4e7] shadow-md hover:shadow-lg bg-white cursor-pointer group transition-all p-0"
@@ -291,7 +282,6 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
           />
         </div>
 
-        {/* Category Circles Row (Categories shown as circles with names underneath) */}
         <div className="bg-white/90 backdrop-blur-xs rounded-2xl sm:rounded-3xl p-3 sm:p-6 shadow-xs border border-[#e0f4e7]">
           <div className="flex items-center justify-between mb-4 sm:mb-5">
             <div className="flex items-center gap-2">
@@ -331,7 +321,6 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
                   }}
                   className="flex flex-col items-center text-center cursor-pointer group active:scale-95 transition-all duration-200 w-full"
                 >
-                  {/* Category Circle with border & picture/icon inside */}
                   <div className={`relative w-16 h-16 sm:w-20 sm:h-20 lg:w-22 lg:h-22 rounded-full p-1 transition-all duration-300 ${
                     isSelected
                       ? 'ring-3 ring-[#1daa61] shadow-md scale-105'
@@ -368,7 +357,6 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
             })}
           </div>
 
-          {/* Minimal Clean Aisles Bar (Matching user reference image_46d9bfce.png) */}
           <div className="mt-5 pt-3.5 border-t border-[#e0f4e7] flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
             <span className="text-xs sm:text-sm font-black tracking-wider text-[#2a6b43] uppercase shrink-0 select-none mr-1">
               AISLES:
@@ -451,7 +439,7 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
           </div>
         </div>
 
-        {/* FILTERED PRODUCTS */}
+        {/* agar category ya search ho to filtered products dikhao warna popular */}
         {showSpecificResults ? (
           <div className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3.5 sm:p-4 rounded-xl border border-[#e0f4e7]">
@@ -523,10 +511,8 @@ export const StoreDashboard: React.FC<StoreDashboardProps> = ({
             )}
           </div>
         ) : (
-          /* Default Dashboard View: Popular + How it works */
           <div className="space-y-10">
 
-            {/* POPULAR PRODUCTS */}
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>

@@ -1,12 +1,6 @@
 import React from 'react';
 import { AnimatedLogo } from './AnimatedLogo';
 
-/**
- * Header brand intro: dots spiral in -> ring pulse -> logo pops -> "AssanMart" types out.
- * It plays once on load and again every time `playKey` changes
- * (App bumps it when the page changes or a modal closes), then stays as the normal logo.
- * Theme colours: #1daa61, #3fc27b, #7fcf9a, amber #f59e0b. Honors "reduce motion".
- */
 interface AnimatedBrandProps {
   playKey?: number | string;
 }

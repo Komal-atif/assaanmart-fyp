@@ -7,15 +7,14 @@ type Lang = 'english' | 'urdu';
 type Phase = 'idle' | 'speaking' | 'listening' | 'thinking';
 
 interface Props {
-  /** The voice-ordering window is open: the welcome agent steps aside (and releases the microphone). */
-  voiceOpen: boolean;
-  /** Increases by one every time a voice order has been placed -> the agent asks what to do next. */
-  afterOrderSignal: number;
+    voiceOpen: boolean;
+    afterOrderSignal: number;
   onVoice: (lang: Lang) => void;
   onLanguage: (lang: Lang) => void;
 }
 
-let greetedThisPageLoad = false; // the greeting happens only when the web page is opened
+// greeting sirf page open hone par ek dafa ho
+let greetedThisPageLoad = false;
 
 export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onVoice, onLanguage }) => {
   const [open, setOpen] = useState(false);
@@ -32,9 +31,12 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
   const stageRef = useRef<WelcomeStage>('language');
   const langRef = useRef<Lang>('english');
   const tokenRef = useRef(0);
+  const bargedRef = useRef(false);
+  const bargeOkRef = useRef(false);
   const propsRef = useRef({ onVoice, onLanguage });
   propsRef.current = { onVoice, onLanguage };
 
+  // audio chalane ke liye, jab khatam ho to true return karta hai
   const play = (url: string) =>
     new Promise<boolean>((resolve) => {
       const a = playerRef.current || (playerRef.current = new Audio());
@@ -47,11 +49,14 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
         resolve(ok);
       };
       resolverRef.current = () => finish(true);
-      a.onplaying = () => setPhase('speaking');
+      a.onplaying = () => {
+        setPhase('speaking');
+        if (bargeOkRef.current && activeRef.current) voice.listen({ bargeIn: true });
+      };
       a.onended = () => finish(true);
       a.onerror = () => finish(true);
       a.src = url.startsWith('http') ? url : `${getBackendUrl()}${url}`;
-      a.play().catch(() => finish(false)); // false = the browser blocked autoplay
+      a.play().catch(() => finish(false));
     });
 
   const stopSpeech = () => {
@@ -68,7 +73,7 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
     try {
       await voice.open();
     } catch {
-      setNotice('Microphone is blocked — please use the buttons.');
+      setNotice('Microphone is blocked - please use the buttons.');
       setPhase('idle');
       return;
     }
@@ -77,15 +82,24 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
     voice.listen();
   };
 
-  /** speak a line, then listen for the answer. Returns false when the browser blocked the sound. */
+    // pehle agent bolta hai phir customer ki baat sunta hai
   const speakThenListen = async (url: string, listen = true) => {
     const my = ++tokenRef.current;
     voice.pause();
-    setPhase('thinking'); // 'speaking' is shown only when the sound really starts
+    bargedRef.current = false;
+    bargeOkRef.current = listen;
+    setPhase('thinking');
     const ok = await play(url);
+    bargeOkRef.current = false;
     if (!ok) {
       setPhase('idle');
       return false;
+    }
+    // agar customer beech mein bol para to dobara sunna shuru nahi karna
+    if (bargedRef.current) {
+      bargedRef.current = false;
+      if (my === tokenRef.current) setPhase('listening');
+      return true;
     }
     await new Promise((r) => setTimeout(r, 350));
     if (my !== tokenRef.current) return true;
@@ -112,7 +126,7 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
       setText('Welcome to AssanMart! Would you like to order by voice or browse the store?');
       setNeedTap(false);
       setPhase('idle');
-      setNotice('The voice server is not reachable — you can still use the buttons.');
+      setNotice('The voice server is not reachable - you can still use the buttons.');
     }
   };
 
@@ -139,6 +153,7 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
     }
   };
 
+  // customer ki awaz server ko bhej kar jawab lena
   const handleUtterance = async (blob: Blob) => {
     setPhase('thinking');
     try {
@@ -159,20 +174,25 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
         setText(d.text || '');
         return finish(d.action, d.audio_url);
       }
-      // not understood: the agent asks again
       if (d.text) setText(d.text);
       if (d.audio_url) await speakThenListen(d.audio_url);
       else await listenNow();
     } catch (err) {
       console.warn('Welcome reply failed:', err);
-      setNotice('Could not hear that — please try again or use the buttons.');
+      setNotice('Could not hear that - please try again or use the buttons.');
       await listenNow();
     }
   };
 
-  const voice = useVoiceLoop({ onUtterance: handleUtterance });
+  const voice = useVoiceLoop({
+    onUtterance: handleUtterance,
+    onBargeIn: () => {
+      bargedRef.current = true;
+      stopSpeech();
+    },
+  });
 
-  // ---- page open: greet once (if the browser blocks the sound, the first click / key press starts it) ----
+  // page khulte hi welcome
   useEffect(() => {
     if (greetedThisPageLoad) return;
     greetedThisPageLoad = true;
@@ -193,12 +213,10 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
     };
   }, [needTap]);
 
-  // ---- the voice window closed after an order: what next? ----
   useEffect(() => {
     if (afterOrderSignal > 0) say('after_order', langRef.current);
   }, [afterOrderSignal]);
 
-  // ---- the customer uses the page's own buttons: "Browse Full Store" etc. -> the agent stops and gets out of the way ----
   const cardRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -213,7 +231,6 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
     return () => document.removeEventListener('click', onClick, true);
   }, []);
 
-  // ---- the voice window is open: step aside, free the microphone ----
   useEffect(() => {
     if (voiceOpen) {
       release();
@@ -221,7 +238,7 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
     }
   }, [voiceOpen]);
 
-  // language chosen with a button: carry on with the next question in that language
+  // button se language chuni to agla sawal usi language mein
   const pickLanguage = (l: Lang) => {
     release();
     langRef.current = l;
@@ -231,28 +248,26 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
 
   if (!open || voiceOpen) return null;
 
-
   const speaking = phase === 'speaking';
   const listening = phase === 'listening';
 
   const status = listening ? 'Listening…' : speaking ? 'Speaking…' : phase === 'thinking' ? 'One moment…' : '';
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-[60] flex justify-center px-3 pb-3 sm:pb-5 pointer-events-none">
+    <div className="fixed inset-x-0 bottom-0 z-[60] flex justify-center px-3 pb-2 sm:pb-4 pointer-events-none">
       <div
         ref={cardRef}
         role="dialog"
         aria-label="Welcome to AssanMart"
         className="pointer-events-auto relative w-full max-w-2xl overflow-hidden rounded-3xl bg-white/70 backdrop-blur-xl border border-white/70 shadow-[0_20px_60px_-15px_rgba(15,110,61,.45)] animate-in slide-in-from-bottom-6 fade-in duration-500"
       >
-        {/* title, what the agent says, status, close */}
-        <div className="flex items-start gap-3 px-4 sm:px-5 pt-4 pb-3">
+                <div className="flex items-start gap-3 px-4 sm:px-5 pt-3 pb-2">
           <span className="mt-0.5 w-9 h-9 shrink-0 rounded-xl bg-[#e0f4e7] text-[#1DAA61] flex items-center justify-center">
             {speaking ? <Volume2 className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </span>
           <div className="min-w-0 flex-1">
-            <h2 className="text-base sm:text-lg font-black text-[#1f5233] leading-tight">Welcome to AssanMart</h2>
-            <p className="mt-0.5 text-[13px] sm:text-sm text-[#4d7a5c] leading-snug line-clamp-3" dir="auto">
+            <h2 className="text-sm sm:text-base font-black text-[#1f5233] leading-tight">Welcome to AssanMart</h2>
+            <p className="mt-0.5 text-xs sm:text-[13px] text-[#4d7a5c] leading-snug line-clamp-3" dir="auto">
               {text || 'Would you like to order by voice or browse the store?'}
             </p>
           </div>
@@ -275,29 +290,29 @@ export const WelcomeAgent: React.FC<Props> = ({ voiceOpen, afterOrderSignal, onV
           </div>
         </div>
 
-        {/* what the customer said */}
-        <div className="px-4 sm:px-5 py-2.5 border-t border-[#e0f4e7] bg-white/50 text-xs sm:text-[13px] text-[#4d7a5c] flex items-center justify-between gap-2" dir="auto">
-          <span className="min-w-0 truncate">
-            {heard ? <>You said: <span className="font-semibold text-[#2a6b43]">“{heard}”</span></> : listening ? 'Listening… say English or اردو' : 'Your words will appear here'}
-          </span>
-          {status && <span className="sm:hidden shrink-0 font-bold text-[#148a4c]">{status}</span>}
-        </div>
+                {(heard || listening) && (
+          <div className="px-4 sm:px-5 py-1.5 border-t border-[#e0f4e7] bg-white/50 text-xs text-[#4d7a5c] flex items-center justify-between gap-2" dir="auto">
+            <span className="min-w-0 truncate">
+              {heard ? <>You said: <span className="font-semibold text-[#2a6b43]">“{heard}”</span></> : 'Listening… say English or اردو'}
+            </span>
+            {status && <span className="sm:hidden shrink-0 font-bold text-[#148a4c]">{status}</span>}
+          </div>
+        )}
 
         {(notice || needTap || stage === 'language') && (
-          <div className="px-4 sm:px-5 pb-3 pt-1 flex flex-wrap items-center gap-2">
-            {/* language choice, only while the agent is asking for it (voice works too) */}
-            {stage === 'language' && (
+          <div className="px-4 sm:px-5 pb-2.5 pt-1 flex flex-wrap items-center gap-2">
+                        {stage === 'language' && (
               <>
-                <button onClick={() => pickLanguage('english')} className="px-5 py-1.5 rounded-full bg-white/80 hover:bg-white border border-[#b3e4c4] text-[#2a6b43] text-sm font-bold cursor-pointer active:scale-95 transition">
+                <button onClick={() => pickLanguage('english')} className="px-4 py-1 rounded-full bg-white/80 hover:bg-white border border-[#b3e4c4] text-[#2a6b43] text-sm font-bold cursor-pointer active:scale-95 transition">
                   English
                 </button>
-                <button onClick={() => pickLanguage('urdu')} className="px-5 py-1.5 rounded-full bg-white/80 hover:bg-white border border-[#b3e4c4] text-[#2a6b43] text-sm font-bold cursor-pointer active:scale-95 transition">
+                <button onClick={() => pickLanguage('urdu')} className="px-4 py-1 rounded-full bg-white/80 hover:bg-white border border-[#b3e4c4] text-[#2a6b43] text-sm font-bold cursor-pointer active:scale-95 transition">
                   اردو
                 </button>
               </>
             )}
             {notice && <span className="text-[11px] text-amber-700">{notice}</span>}
-            {needTap && <span className="text-[11px] font-semibold text-[#148a4c]">🔊 Tap anywhere to hear the greeting</span>}
+            {needTap && <span className="text-[11px] font-semibold text-[#148a4c]">Tap anywhere to hear the greeting</span>}
           </div>
         )}
       </div>

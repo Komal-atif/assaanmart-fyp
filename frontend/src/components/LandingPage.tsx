@@ -25,13 +25,13 @@ interface LandingPageProps {
   onBrowseStore: () => void;
   onOpenVoice: () => void;
   onOpenImageScanner?: () => void;
-  /** optional: used by the aisle chips to open the store filtered by that aisle */
   onQuickSearch?: (query: string) => void;
 }
 
-/** Put grocery-basket.webp inside your /public folder */
+// basket ki tasveer public folder se
 const BASKET_SRC = '/grocery-basket.webp';
 
+// hero mein badalti hui headlines
 const HEADLINES = [
   { main: 'Fresh Vegetables', sub: 'Hand-picked daily from certified farms across Pakistan at honest everyday prices.' },
   { main: 'Big Discount', sub: 'Special wholesale rates on household commodities, cooking oil, rice and pantry staples.' },
@@ -45,6 +45,7 @@ const TRUST = [
   { icon: Headphones, title: 'Friendly Support', note: 'Here when you need us' },
 ];
 
+// aisle ke naam aur icons
 const AISLES = [
   { name: 'Fruits & Vegetables', icon: Apple },
   { name: 'Dairy', icon: Milk },
@@ -69,6 +70,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onBrowseStore, onOpenV
   const [i, setI] = useState(0);
   const [open, setOpen] = useState<number | null>(0);
 
+  // har 3.8 second mein headline badalti hai
   useEffect(() => {
     const t = window.setInterval(() => setI((p) => (p + 1) % HEADLINES.length), 3800);
     return () => window.clearInterval(t);
@@ -76,6 +78,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onBrowseStore, onOpenV
   const cur = HEADLINES[i];
   const words = cur.main.split(' ');
 
+  // aisle par click se store usi category mein khulta hai
   const openAisle = (name: string) => (onQuickSearch ? onQuickSearch(name) : onBrowseStore());
 
   const renderTrust = (cls: string) => (
@@ -96,7 +99,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onBrowseStore, onOpenV
 
   return (
     <div className="bg-transparent font-sans">
-      {/* ---------------- hero: deep green rounded banner ---------------- */}
       <section className="relative bg-white px-3 sm:px-6 pt-3 sm:pt-5 pb-2 lg:pb-8">
         <div className="relative max-w-[1240px] mx-auto">
         <div
@@ -109,7 +111,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onBrowseStore, onOpenV
           <span className="lp-dots-w absolute inset-0 pointer-events-none" />
 
           <div className="relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-x-4 lg:gap-y-5 items-center px-5 sm:px-10 lg:px-12 pt-9 sm:pt-10 pb-5 sm:pb-6 lg:pb-0">
-            {/* text */}
             <div className="lg:col-span-7 lg:row-start-1 text-center lg:text-left">
               <div className="min-h-[140px] sm:min-h-[165px] lg:min-h-[180px] flex flex-col justify-center lg:justify-start">
                 <h1 key={cur.main} className="lp-slide text-[2.1rem] leading-[1.08] sm:text-5xl lg:text-[3rem] font-black tracking-tight">
@@ -146,7 +147,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onBrowseStore, onOpenV
 
             </div>
 
-            {/* basket */}
             <div className="lg:col-span-5 lg:col-start-8 lg:row-start-1 flex justify-center self-center">
               <div className="relative w-[min(84vw,360px)] sm:w-[min(66vw,430px)] lg:w-full lg:max-w-[540px] lg:-mt-8 lg:-mb-6">
                 <span className="absolute inset-[8%] rounded-full bg-[#6bd39a]/35 blur-3xl pointer-events-none" />
@@ -162,17 +162,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onBrowseStore, onOpenV
               </div>
             </div>
 
-            {/* trust bar: mobile/tablet (inside the green banner) */}
             {renderTrust('lg:hidden grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-3 sm:gap-5 rounded-2xl bg-white p-3 sm:p-4 shadow-[0_14px_30px_-14px_rgba(0,0,0,.45)]')}
           </div>
         </div>
 
-        {/* trust card: desktop only, hangs over the bottom edge of the hero into the white space */}
         {renderTrust('hidden lg:grid grid-cols-4 gap-5 absolute left-12 right-12 bottom-0 translate-y-[40%] z-20 rounded-2xl bg-white p-4 shadow-[0_14px_30px_-14px_rgba(0,0,0,.45)]')}
         </div>
       </section>
 
-      {/* ---------------- aisles marquee ---------------- */}
       <section className="bg-white pt-10 sm:pt-14 pb-2">
         <div className="text-center px-4 mb-5">
           <span className="inline-block px-3 py-1 rounded-full bg-[#e0f4e7] text-[#2a6b43] text-[11px] font-bold tracking-wide">SHOP BY AISLE</span>
@@ -198,12 +195,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onBrowseStore, onOpenV
         </div>
       </section>
 
-      {/* ---------------- how it works ---------------- */}
       <div className="max-w-[1240px] mx-auto px-3 sm:px-6 py-10 sm:py-14">
         <HowItWorks onOpenVoice={onOpenVoice} onOpenImageScanner={onOpenImageScanner} />
       </div>
 
-      {/* ---------------- FAQ ---------------- */}
       <section className="max-w-[860px] mx-auto px-4 sm:px-6 pb-12 sm:pb-16">
         <div className="text-center mb-6">
           <span className="inline-block px-3 py-1 rounded-full bg-[#e0f4e7] text-[#2a6b43] text-[11px] font-bold tracking-wide">FAQ</span>
@@ -236,7 +231,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onBrowseStore, onOpenV
         </div>
       </section>
 
-      {/* ---------------- closing banner ---------------- */}
       <section className="px-3 sm:px-6 pb-12 sm:pb-16">
         <div className="relative overflow-hidden max-w-[1140px] mx-auto rounded-3xl bg-gradient-to-br from-[#148a4c] via-[#1DAA61] to-[#3fc27b] text-white text-center px-5 py-10 sm:py-14 space-y-4 shadow-xl shadow-[#1DAA61]/25">
           <span className="lp-blob absolute -top-16 -left-10 w-52 h-52 rounded-full bg-white/10 pointer-events-none" />

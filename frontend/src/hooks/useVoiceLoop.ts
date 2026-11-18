@@ -1,6 +1,5 @@
 import { useRef, useCallback, useEffect } from 'react';
 
-// phones and tablets: the speaker is next to the microphone, so the agent's own voice would "interrupt" itself
 export const IS_MOBILE =
   typeof navigator !== 'undefined' &&
   (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || ((navigator.maxTouchPoints || 0) > 1 && typeof window !== 'undefined' && window.innerWidth < 900));
@@ -8,10 +7,10 @@ export const IS_MOBILE =
 export interface UseVoiceLoopOptions {
   onUtterance: (blob: Blob) => void;
   onBargeIn?: () => void;
-  onIdle?: () => void;         // nobody said anything for `idleMs`: the caller repeats the question
-  idleMs?: number;             // default 30000
-  silenceThresholdMs?: number; // quiet time (relative to the user's own voice) before the audio is sent (default 900ms)
-  maxUtteranceMs?: number;     // safety stop: send whatever was recorded after this long (default 30000ms): background voices can never keep the mic open forever
+  onIdle?: () => void;         
+  idleMs?: number;            
+  silenceThresholdMs?: number; 
+  maxUtteranceMs?: number;     
 }
 
 export function useVoiceLoop({
@@ -27,7 +26,7 @@ export function useVoiceLoop({
   const analyserRef = useRef<AnalyserNode | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const sendOnStopRef = useRef<boolean>(false); // only a recording that really contained speech is sent
+  const sendOnStopRef = useRef<boolean>(false); 
   const levelRef = useRef<number>(0);
   const isListeningRef = useRef<boolean>(false);
   const isBargeInRef = useRef<boolean>(false);
@@ -35,28 +34,26 @@ export function useVoiceLoop({
   const silenceTimerRef = useRef<any>(null);
   const rafRef = useRef<number | null>(null);
   // adaptive voice detection
-  const noiseFloorRef = useRef<number>(0.03);   // slow average of the room's background level
-  const userLevelRef = useRef<number>(0);       // average level of THIS customer's speech in the current utterance
-  const aboveSinceRef = useRef<number>(0);      // when the level first rose above the start / barge-in threshold
+  const noiseFloorRef = useRef<number>(0.03);  
+  const userLevelRef = useRef<number>(0);       
+  const aboveSinceRef = useRef<number>(0);      
   const watchdogRef = useRef<any>(null);
-  const peakRef = useRef<number>(0);            // loudest level seen in this listening round
-  const lastVoiceRef = useRef<number>(0);       // last moment the level was above the speech threshold
-  const onUtteranceRef = useRef(onUtterance);  // always the newest callback (no stale closures)
+  const peakRef = useRef<number>(0);           
+  const lastVoiceRef = useRef<number>(0);      
+  const onUtteranceRef = useRef(onUtterance);  
   onUtteranceRef.current = onUtterance;
   const onIdleRef = useRef(onIdle);
   onIdleRef.current = onIdle;
   const bargeBaseRef = useRef<number>(0.03);    // level of the agent's own sound in the room while it speaks
-  const listenStartRef = useRef<number>(0);     // when this listening round began (no-speech fallback)
-  const speechStartRef = useRef<number>(0);     // when real speech began (for the safety stop)
+  const listenStartRef = useRef<number>(0);     // when this listening round began 
+  const speechStartRef = useRef<number>(0);     // when real speech began 
 
-  // Clean up resources on unmount
   useEffect(() => {
     return () => {
       stopAll();
     };
   }, []);
 
-  // stop a recorder WITHOUT sending what it captured (nothing was said / it is being replaced)
   const discardRecorder = () => {
     const r = recorderRef.current;
     if (!r) return;
@@ -107,7 +104,6 @@ export function useVoiceLoop({
 
     streamRef.current = stream;
 
-    // Set up Web Audio Analyser
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     if (AudioContextClass) {
       const ctx = new AudioContextClass();
@@ -123,10 +119,8 @@ export function useVoiceLoop({
       audioCtxRef.current = ctx;
       analyserRef.current = analyser;
 
-      // time limits. Also run from a timer, so they hold even when the browser slows the animation loop (hidden window / battery saver)
       const checkCaps = (now: number) => {
         if (!isListeningRef.current) return;
-        // nobody said anything for 30 s (and the room was quiet): the caller asks again / repeats. Nothing is sent.
         if (!hasSpokenRef.current && !isBargeInRef.current && peakRef.current <= 0.12 && now - listenStartRef.current > idleMs) {
           listenStartRef.current = now;
           chunksRef.current = [];
@@ -135,8 +129,6 @@ export function useVoiceLoop({
           else if (recorderRef.current && recorderRef.current.state === 'recording') startRecorder();
         }
 
-        // safety: never wait forever when something keeps the level up. After 30 s the recording is sent and processed,
-        // even when the voice detector never decided that speech started (loud room, quiet voice).
         if (hasSpokenRef.current && now - speechStartRef.current > maxUtteranceMs) finishUtterance();
         else if (!isBargeInRef.current && peakRef.current > 0.12 && now - listenStartRef.current > maxUtteranceMs) finishUtterance(true);
       };
@@ -146,7 +138,6 @@ export function useVoiceLoop({
       let lastFrame = 0;
       const updateVolume = () => {
         if (!analyserRef.current) return;
-        // phones: measure ~25 times a second instead of 60 (saves battery and keeps the page smooth)
         if (IS_MOBILE) {
           const t0 = performance.now();
           if (t0 - lastFrame < 40) { rafRef.current = requestAnimationFrame(updateVolume); return; }
@@ -158,21 +149,14 @@ export function useVoiceLoop({
           sum += buffer[i];
         }
         const avg = sum / buffer.length;
-        // Normalize 0.0 to 1.0 with soft non-linear curve
         const norm = Math.min(1, Math.max(0, avg / 128));
         levelRef.current = norm;
 
-        // VAD (Voice Activity Detection), relative to the room and to the customer's own voice:
-        //  - slight sounds never interrupt the agent: barge-in needs a clearly loud voice kept up for ~0.5 s
-        //  - background voices / TV do not keep the mic "open": after the customer stops, anything much quieter
-        //    than their own speech counts as silence, so the audio is sent a moment later
         const now = performance.now();
         const floor = noiseFloorRef.current;
         if (isListeningRef.current) {
-          const startT = Math.max(0.08, floor * 1.7);   // sensitive enough for quiet voices / phone mics
-          const bargeT = IS_MOBILE ? Math.max(0.16, bargeBaseRef.current * 2.4) : Math.max(0.10, bargeBaseRef.current * 1.8);   // phones: speaker next to the mic, so a stricter bar   // relative to what the agent's own voice already adds to the room
-          // the longer someone keeps talking, the stricter 'silence' becomes (0.5 -> 0.7 of the customer's own level after 8 s),
-          // so a TV / people in the background cannot hold the microphone open
+          const startT = Math.max(0.08, floor * 1.7);   
+          const bargeT = IS_MOBILE ? Math.max(0.16, bargeBaseRef.current * 2.4) : Math.max(0.10, bargeBaseRef.current * 1.8);   
           const k = hasSpokenRef.current && now - speechStartRef.current > 8000 ? 0.7 : 0.5;
           const threshold = isBargeInRef.current ? bargeT : hasSpokenRef.current ? Math.max(startT, userLevelRef.current * k) : startT;
           const needMs = isBargeInRef.current ? (IS_MOBILE ? 450 : 300) : 200;
@@ -208,7 +192,6 @@ export function useVoiceLoop({
           aboveSinceRef.current = 0;
         }
 
-        // learn the room's background level (slowly, only when nobody is speaking)
         if (!hasSpokenRef.current) noiseFloorRef.current = Math.min(0.2, Math.max(0.01, floor * 0.985 + norm * 0.015));
 
         rafRef.current = requestAnimationFrame(updateVolume);
@@ -234,12 +217,10 @@ export function useVoiceLoop({
       silenceTimerRef.current = null;
     }
 
-    // send only if the customer really spoke (otherwise room noise would be sent again and again)
     if (!hasSpokenRef.current && !force) {
       discardRecorder();
       return;
     }
-    // a blip shorter than ~0.5 s is a noise, not an order
     if (lastVoiceRef.current - speechStartRef.current < 500 && !force) {
       discardRecorder();
       isListeningRef.current = true;
@@ -286,10 +267,9 @@ export function useVoiceLoop({
 
   const startRecorder = () => {
     if (!streamRef.current) return;
-    discardRecorder(); // the old recorder must never send its leftovers
+    discardRecorder(); 
     sendOnStopRef.current = false;
 
-    // Determine supported mimeType
     let mimeType = 'audio/webm;codecs=opus';
     if (!MediaRecorder.isTypeSupported(mimeType)) {
       if (MediaRecorder.isTypeSupported('audio/webm')) {
@@ -308,7 +288,7 @@ export function useVoiceLoop({
       const recorder = new MediaRecorder(streamRef.current, options);
       recorderRef.current = recorder;
 
-      const myChunks: Blob[] = [];   // belongs to THIS recorder only
+      const myChunks: Blob[] = [];   
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) myChunks.push(e.data);
       };
@@ -319,12 +299,12 @@ export function useVoiceLoop({
         if (!send || myChunks.length === 0) return;
         const finalType = recorder.mimeType || mimeType || 'audio/webm';
         const blob = new Blob(myChunks, { type: finalType });
-        if (blob.size < 2500) return;   // too short to be speech (also avoids 'corrupt audio' errors)
+        if (blob.size < 2500) return;   
         onUtteranceRef.current(blob);
       };
 
       if (/iPhone|iPad|iPod/i.test(navigator.userAgent) || (/Safari/i.test(navigator.userAgent) && !/Chrome|Chromium|Android/i.test(navigator.userAgent))) recorder.start();   // Safari: one clean file at stop (chunked mp4 pieces can be unreadable)
-      else recorder.start(100); // chunk every 100ms
+      else recorder.start(100); 
     } catch (err) {
       console.warn('Could not create MediaRecorder:', err);
     }
@@ -337,7 +317,7 @@ export function useVoiceLoop({
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
     }
-    if (!sendOnStopRef.current) discardRecorder();   // paused while nothing was said: drop the recording, do not send it
+    if (!sendOnStopRef.current) discardRecorder();  
     levelRef.current = 0;
   }, []);
 

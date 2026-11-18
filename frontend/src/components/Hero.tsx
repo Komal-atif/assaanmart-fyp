@@ -7,7 +7,6 @@ interface HeroProps {
   onQuickSearch?: (query: string) => void;
 }
 
-/** A floating leaf (pure SVG so it stays sharp on every screen). */
 const Leaf: React.FC<{ className: string; style?: React.CSSProperties }> = ({ className, style }) => (
   <svg viewBox="0 0 64 64" className={`am-leaf pointer-events-none absolute ${className}`} style={style} aria-hidden="true">
     <defs>
@@ -57,7 +56,6 @@ export const Hero: React.FC<HeroProps> = ({ onOpenVoice, onExploreStore }) => {
       `}</style>
 
       <div className="max-w-[1240px] mx-auto px-4 sm:px-6 grid grid-cols-1 lg:grid-cols-2 items-center gap-2 lg:gap-0">
-        {/* ---------- text + buttons ---------- */}
         <div className="relative z-10 pt-8 pb-4 sm:pt-12 lg:py-20 text-center lg:text-left">
           <h1 className="r1 font-black tracking-tight leading-[1.05] text-[2.4rem] sm:text-6xl lg:text-[4rem] text-[#115e59]">
             Fresh Groceries,
@@ -98,7 +96,7 @@ export const Hero: React.FC<HeroProps> = ({ onOpenVoice, onExploreStore }) => {
           </ul>
         </div>
 
-        {/* ---------- basket + leaves ---------- */}
+        {/* basket */}
         <div className="relative pop flex justify-center lg:justify-end">
           <Leaf className="w-9 sm:w-12 left-[6%] top-[10%]" style={{ ['--r' as any]: '-20deg' }} />
           <Leaf className="b w-7 sm:w-9 left-[2%] bottom-[24%]" style={{ ['--r' as any]: '30deg', animationDelay: '-2s' }} />

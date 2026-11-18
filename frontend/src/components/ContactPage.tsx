@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
-import { Phone, Mail, MapPin, Clock, MessageCircle, Send } from 'lucide-react';
+import { Phone, Mail, Clock, MessageCircle, Send } from 'lucide-react';
 
-/* ---- EDIT THESE: your real shop details ---- */
 const CONTACT = {
   phone: '+92 300 0000000',
-  whatsapp: '923000000000',            // country code + number, no + or spaces
-  email: 'support@assanmart.pk',
-  address: 'Your street, Your area, Your city, Pakistan',
+  whatsapp: '923000000000',
+  email: 'assanmart@gmail.com',
   hours: 'Every day, 9:00 AM to 10:00 PM',
 };
 
@@ -20,7 +18,6 @@ export const ContactPage: React.FC<ContactPageProps> = ({ user }) => {
   const [message, setMessage] = useState('');
   const [sent, setSent] = useState(false);
 
-  // No server needed: the message opens in the customer's mail app, addressed to the shop.
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const subject = encodeURIComponent(`AssanMart message from ${name || 'a customer'}`);
@@ -33,7 +30,6 @@ export const ContactPage: React.FC<ContactPageProps> = ({ user }) => {
     { icon: Phone, label: 'Call us', value: CONTACT.phone, href: `tel:${CONTACT.phone.replace(/\s/g, '')}` },
     { icon: MessageCircle, label: 'WhatsApp', value: 'Chat with us', href: `https://wa.me/${CONTACT.whatsapp}` },
     { icon: Mail, label: 'Email', value: CONTACT.email, href: `mailto:${CONTACT.email}` },
-    { icon: MapPin, label: 'Address', value: CONTACT.address },
     { icon: Clock, label: 'Open', value: CONTACT.hours },
   ];
 

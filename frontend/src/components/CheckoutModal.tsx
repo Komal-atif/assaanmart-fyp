@@ -13,7 +13,6 @@ interface CheckoutModalProps {
   cart: CartItem[];
   user: User | null;
   onOrderSuccess: (order: Order) => void;
-  /** language of the voice helper */
   lang?: 'english' | 'urdu';
 }
 
@@ -46,7 +45,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [locating, setLocating] = useState(false);
   const [locError, setLocError] = useState('');
   const [savedNote, setSavedNote] = useState(false);
-  const paymentMethod = 'cod'; // Cash on Delivery is the only payment method
+  const paymentMethod = 'cod'; 
   const [deliverySlot, setDeliverySlot] = useState('Express (30-45 mins)');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [completedOrder, setCompletedOrder] = useState<Order | null>(null);
@@ -61,6 +60,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const playerRef = useRef<HTMLAudioElement | null>(null);
   const resolverRef = useRef<(() => void) | null>(null);
   const tokenRef = useRef(0);
+  const bargedRef = useRef(false);
+  const bargeOkRef = useRef(false);
   const activeRef = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
   const vals = useRef({ name: '', address: '', total: 0 });
@@ -71,6 +72,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     return sub + (sub >= 2000 ? 0 : 150);
   };
   vals.current = { name, address, total: total() };
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const addrNow = useRef('');
   addrNow.current = address;
 
@@ -93,6 +96,9 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       };
       a.onended = done;
       a.onerror = done;
+      a.onplaying = () => {
+        if (bargeOkRef.current && activeRef.current) voice.listen({ bargeIn: true });   // the customer may interrupt
+      };
       a.src = url.startsWith('http') ? url : `${getBackendUrl()}${url}`;
       a.play().catch(done);
     });
@@ -114,12 +120,19 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     const my = ++tokenRef.current;
     setAgentText(text);
     voice.pause();
+    bargedRef.current = false;
+    bargeOkRef.current = listen;
     setVPhase('speaking');
     try {
       const d = await scanSay(text, lang);
       if (my !== tokenRef.current) return;
       if (d.audio_url) {
         await playUrl(d.audio_url);
+        bargeOkRef.current = false;
+        if (bargedRef.current) {            
+          if (my === tokenRef.current) setVPhase('listening');
+          return;
+        }
         await new Promise((r) => setTimeout(r, 350));
       }
     } catch {
@@ -174,15 +187,28 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         setTimeout(() => formRef.current?.requestSubmit(), 200);
         return;
       }
-      if (r.action === 'no') return askAddress(false);
-      return say(tt('Please say yes to place the order, or no to change the address.', 'آرڈر کے لیے ہاں کہیں، ایڈریس بدلنے کے لیے نہیں۔'));
+      if (r.action === 'no') {
+        // everything is filled in and the customer says no: close the checkout, the cart stays as it is
+        stepRef.current = null;
+        await say(tt("Okay, I haven't placed the order. Your cart is saved.", 'ٹھیک ہے، آرڈر نہیں کیا۔ آپ کی ٹوکری محفوظ ہے۔'), false);
+        stopVoice();
+        onCloseRef.current();
+        return;
+      }
+      return say(tt('Please say yes to place the order, or no to cancel.', 'آرڈر کے لیے ہاں کہیں، منسوخ کرنے کے لیے نہیں۔'));
     } catch (e) {
       console.warn('checkout voice failed:', e);
       return listenNow();
     }
   };
 
-  const voice = useVoiceLoop({ onUtterance: handleUtterance });
+  const voice = useVoiceLoop({
+    onUtterance: handleUtterance,
+    onBargeIn: () => {
+      bargedRef.current = true;
+      stopSpeech();
+    },
+  });
 
   const stopVoice = () => {
     activeRef.current = false;
@@ -203,8 +229,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
       stepRef.current = 'saved';
       const v = vals.current;
       return say(
-        tt(`Hello ${v.name}! Should I deliver to ${v.address}? Your total is ${Math.round(v.total)} rupees, cash on delivery. Say yes to place the order, or no to change the address.`,
-           `${v.name} خوش آمدید! کیا ${v.address} پر ڈیلیوری کر دوں؟ کل رقم ${Math.round(v.total)} روپے، کیش آن ڈیلیوری۔ آرڈر کے لیے ہاں کہیں، ایڈریس بدلنے کے لیے نہیں۔`)
+        tt(`Hello ${v.name}! Should I deliver to ${v.address}? Your total is ${Math.round(v.total)} rupees, cash on delivery. Say yes to place the order, or no to cancel.`,
+           `${v.name} خوش آمدید! کیا ${v.address} پر ڈیلیوری کر دوں؟ کل رقم ${Math.round(v.total)} روپے، کیش آن ڈیلیوری۔ آرڈر کے لیے ہاں کہیں، منسوخ کرنے کے لیے نہیں۔`)
       );
     }
     return askAddress(true);
@@ -301,7 +327,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
     const paymentLabel = 'Cash on Delivery';
 
     try {
-      // The server saves the order (and re-checks the prices) before we show "confirmed".
       const placed = await placeWebOrder({
         items: cart.map((i) => ({ id: i.id, quantity: i.quantity })),
         customer_name: name,

@@ -12,6 +12,7 @@ interface HowItWorksProps {
 type Step = { icon: React.ElementType; title: string; text: string };
 type Flow = 'voice' | 'photo';
 
+// do tareeqe: voice aur photo, har ke 4 steps
 const FLOWS: Record<Flow, { label: string; icon: React.ElementType; intro: string; steps: Step[] }> = {
   voice: {
     label: 'Order by voice',
@@ -40,8 +41,6 @@ const FLOWS: Record<Flow, { label: string; icon: React.ElementType; intro: strin
 const ITEMS = ['Atta 5 kg', 'Eggs 12', 'Milk 1 L'];
 const STEP_MS = 3200;
 
-/* ------------------------------------------------------------------ the little animated scenes */
-
 const Basket: React.FC<{ count: number }> = ({ count }) => (
   <div className="relative">
     <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#1DAA61] to-[#3fc27b] text-white flex items-center justify-center shadow-lg shadow-[#1DAA61]/30 hiw-pop">
@@ -62,6 +61,7 @@ const Chip: React.FC<{ text: string; delay: number; done?: boolean }> = ({ text,
   </div>
 );
 
+// har step ke saath chhota animated scene
 const Scene: React.FC<{ flow: Flow; phase: number }> = ({ flow, phase }) => {
   if (flow === 'voice') {
     if (phase === 0) {
@@ -118,7 +118,6 @@ const Scene: React.FC<{ flow: Flow; phase: number }> = ({ flow, phase }) => {
     );
   }
 
-  // photo + voice
   const Paper: React.FC<{ scan?: boolean; tick?: boolean }> = ({ scan, tick }) => (
     <div className="relative w-40 rounded-xl bg-white border border-[#b3e4c4] shadow-md px-4 py-3 overflow-hidden rotate-[-2deg]">
       {ITEMS.map((t, i) => (
@@ -171,15 +170,13 @@ const Scene: React.FC<{ flow: Flow; phase: number }> = ({ flow, phase }) => {
   );
 };
 
-/* ------------------------------------------------------------------ the section */
-
 export const HowItWorks: React.FC<HowItWorksProps> = ({ onOpenVoice, onOpenImageScanner }) => {
   const [tab, setTab] = useState<Flow>('voice');
   const [phase, setPhase] = useState(0);
   const [paused, setPaused] = useState(false);
   const flow = FLOWS[tab];
 
-  // the story plays through the 4 steps on its own, then starts over
+  // 4 steps khud chalte hain, hover par ruk jate hain
   useEffect(() => {
     if (paused) return;
     if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
@@ -187,6 +184,7 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onOpenVoice, onOpenImage
     return () => window.clearInterval(t);
   }, [paused, tab]);
 
+  // tab badalne par step phir pehla
   const choose = (k: Flow) => { setTab(k); setPhase(0); };
 
   return (
@@ -228,7 +226,6 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onOpenVoice, onOpenImage
         onMouseEnter={() => setPaused(true)}
         onMouseLeave={() => setPaused(false)}
       >
-        {/* animated picture */}
         <div className="lg:col-span-2 relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#f3fbf6] via-white to-[#e0f4e7] border border-[#e0f4e7] min-h-[260px] sm:min-h-[300px] flex items-center justify-center p-5">
           <span className="hiw-blob absolute -top-10 -left-10 w-40 h-40 rounded-full bg-[#1DAA61]/10" />
           <span className="hiw-blob absolute -bottom-12 -right-8 w-44 h-44 rounded-full bg-[#f59e0b]/10" style={{ animationDelay: '1.2s' }} />
@@ -242,7 +239,6 @@ export const HowItWorks: React.FC<HowItWorksProps> = ({ onOpenVoice, onOpenImage
           </div>
         </div>
 
-        {/* the four steps; the current one lights up with the picture */}
         <ol className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
           {flow.steps.map((s, i) => {
             const on = i === phase;

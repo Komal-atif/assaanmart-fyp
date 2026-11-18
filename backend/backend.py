@@ -16,56 +16,74 @@ import edge_tts
 from dotenv import load_dotenv
 
 load_dotenv()
+# the main app
 app = FastAPI()
+# allows the website to call this server
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+# keys and settings come from the .env file
 DEEPGRAM_KEY = os.getenv("DEEPGRAM_API_KEY")
 UPLIFT_KEY = os.getenv("UPLIFTAI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
-CSV_PATH = os.getenv("CSV_PATH", "data/assanmart_dataset.xlsx")   # .xlsx or .csv both work
-BRAND_READ_ALL = 8      # up to this many brands are read in one go
-BRAND_PAGE = 6          # above that, brands are read 6 at a time ("next" for more)
-READ_ALL_UP_TO = 4      # up to this many products are read in one go
-VARIANT_PAGE = 3        # above that, products are read 3 at a time ("next" for more)
+CSV_PATH = os.getenv("CSV_PATH", "data/assanmart_dataset.xlsx")
+# how many brands or products are read at once before we say 'next'
+BRAND_READ_ALL = 8
+BRAND_PAGE = 6
+READ_ALL_UP_TO = 4
+VARIANT_PAGE = 3
 
 os.makedirs("temp_audio", exist_ok=True)
 
-# Reused HTTP connections (saves a TLS handshake on every call)
+# one shared connection so calls are faster
 http = requests.Session()
 
-# ============================================================
-# DATABASE + CSV DATASET
-# ============================================================
 
-# Local development: SQLite file. Online: set DATABASE_URL to your Supabase / PostgreSQL connection string.
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./asanmart.db")
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = "postgresql+psycopg2://" + DATABASE_URL[len("postgres://"):]
-elif DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = "postgresql+psycopg2://" + DATABASE_URL[len("postgresql://"):]
+
+# psycopg2 kuch Windows laptops par block ho jata hai (DLL error), tab pure-python pg8000 use karte hain
+try:
+    import psycopg2  # noqa: F401
+    PG_DRIVER = "psycopg2"
+except Exception:
+    PG_DRIVER = "pg8000"
+
+pg_connect_args = {}
+for prefix in ("postgres://", "postgresql://"):
+    if DATABASE_URL.startswith(prefix):
+        DATABASE_URL = f"postgresql+{PG_DRIVER}://" + DATABASE_URL[len(prefix):]
+        break
+if DATABASE_URL.startswith("postgresql+pg8000://"):
+    # pg8000 ko sslmode URL mein samajh nahi aata, isliye hata kar ssl alag se dete hain
+    base, _, query = DATABASE_URL.partition("?")
+    params = [q for q in query.split("&") if q and not q.startswith("sslmode=")]
+    if "sslmode=disable" not in query:
+        pg_connect_args["ssl_context"] = True
+    DATABASE_URL = base + ("?" + "&".join(params) if params else "")
+
 if DATABASE_URL.startswith("sqlite"):
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 else:
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=5, max_overflow=5)
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=5, max_overflow=5, connect_args=pg_connect_args)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
 
+# database tables: products, orders, customers and the items of each order
 class Product(Base):
     __tablename__ = "products"
     id = Column(Integer, primary_key=True)
     name = Column(String)
     brand = Column(String)
     category = Column(String)
-    subcategory = Column(String)        # = "item family" (Flour, Sugar, Pulses, ...)
+    subcategory = Column(String)
     package_size = Column(String)
     unit = Column(String)
-    brand_ur = Column(String, nullable=True)   # brand in Urdu script ("ڈالڈا") -> matched without calling Gemini
-    aliases = Column(String, nullable=True)    # spoken words for this product, comma separated
-    price = Column(Float)               # price of ONE pack/unit as listed
+    brand_ur = Column(String, nullable=True)
+    aliases = Column(String, nullable=True)
+    price = Column(Float)
     image_url = Column(String, nullable=True)
-    stock_quantity = Column(Float, nullable=True)   # empty in CSV -> treated as "in stock"
-    is_active = Column(Integer, default=1)          # 0 = hidden from the store and the agent (set by the admin)
+    stock_quantity = Column(Float, nullable=True)
+    is_active = Column(Integer, default=1)
 
 
 class Order(Base):
@@ -75,10 +93,10 @@ class Order(Base):
     total_price = Column(Float)
     payment_method = Column(String, default="COD")
     status = Column(String, default="confirmed")
-    user_id = Column(String, nullable=True)          # Supabase user id (None for guests)
+    user_id = Column(String, nullable=True)
     session_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    source = Column(String, nullable=True)            # "voice" (agent confirmed) or "web" (store checkout)
+    source = Column(String, nullable=True)
     customer_name = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
@@ -89,7 +107,6 @@ class Order(Base):
 
 
 class Customer(Base):
-    """What a signed-in customer told us once (delivery details): remembered, only confirmed at the next order."""
     __tablename__ = "customers"
     user_id = Column(String, primary_key=True)
     name = Column(String, nullable=True)
@@ -118,11 +135,10 @@ def _num(v):
         x = float(v)
     except (TypeError, ValueError):
         return None
-    return None if x != x else x        # NaN -> None
+    return None if x != x else x
 
 
 def _clean(v):
-    """Excel blanks come in as NaN — turn them into '' instead of the string 'nan'."""
     try:
         if v is None or pd.isna(v):
             return ""
@@ -131,23 +147,24 @@ def _clean(v):
     return str(v).strip()
 
 
-FAMILY_SHEET = {}      # family -> {"en": "...", "ur": "...", "name_ur": "..."} from the dataset's "Families" sheet
+FAMILY_SHEET = {}
 
 
-_HIDDEN = []        # rows switched off in the dataset (is_active = 0): known, but not for sale
+_HIDDEN = []
 
 
+# reads the products file (excel or csv) and fills the products table
 def load_csv_into_db():
     base = os.path.dirname(os.path.abspath(__file__))
     path = CSV_PATH if os.path.exists(CSV_PATH) else os.path.join(base, CSV_PATH)
     if not os.path.exists(path):
-        print(f"⚠️ Dataset not found at {CSV_PATH} — put the file there or set CSV_PATH")
+        print(f"Warning: Dataset not found at {CSV_PATH} — put the file there or set CSV_PATH")
         return
 
     try:
         if path.lower().endswith((".xlsx", ".xls")):
             df = pd.read_excel(path, sheet_name=0)
-            try:                                   # optional sheet "Families": spoken words + Urdu name for each item family
+            try:
                 fs = pd.read_excel(path, sheet_name="Families")
                 fs.columns = [str(c).strip().lower() for c in fs.columns]
                 FAMILY_SHEET.clear()
@@ -161,13 +178,13 @@ def load_csv_into_db():
         else:
             df = pd.read_csv(path, encoding="utf-8-sig")
     except Exception as e:
-        print(f"❌ Error reading dataset: {e}")
+        print(f"Error reading dataset: {e}")
         return
     df.columns = [str(c).strip().lower() for c in df.columns]
 
     missing = [c for c in ("name", "price", "subcategory") if c not in df.columns]
     if missing:
-        print(f"❌ Dataset is missing columns: {missing}. Found: {list(df.columns)}")
+        print(f"Error: Dataset is missing columns: {missing}. Found: {list(df.columns)}")
         return
 
     try:
@@ -177,8 +194,7 @@ def load_csv_into_db():
     except Exception:
         have_n = 0
     if have_n > 0 and os.getenv("RELOAD_FROM_XLSX", "0") != "1":
-        # the DATABASE is the catalogue now: whatever the admin added / changed stays. (RELOAD_FROM_XLSX=1 loads the Excel again once.)
-        print(f"✅ Using the {have_n} products already in the database (admin changes are kept)")
+        print(f"OK: Using the {have_n} products already in the database (admin changes are kept)")
         return
 
     Product.__table__.drop(engine, checkfirst=True)
@@ -192,16 +208,16 @@ def load_csv_into_db():
         if price is None or not subcategory:
             continue
         act = _num(r.get("is_active"))
-        if act is not None and act == 0:            # is_active = 0 -> hidden from the agent
+        if act is not None and act == 0:
             if _clean(r.get("name")) and subcategory:
                 _HIDDEN.append({"name": _clean(r.get("name")), "brand": _clean(r.get("brand")) or "",
                                 "brand_ur": _clean(r.get("brand_ur")) or "", "family": subcategory})
             continue
         pid = _num(r.get("id"))
         pid = int(pid) if pid is not None else i + 1
-        if pid in used_ids:                         # same id twice: keep BOTH products, give the later one a new id
+        if pid in used_ids:
             new_id = max(used_ids | {int(v) for v in df["id"].dropna()}) + 1
-            print(f"⚠️ Duplicate id {pid}: '{_clean(r.get('name'))}' got new id {new_id} (fix the id column in your Excel)")
+            print(f"Warning: Duplicate id {pid}: '{_clean(r.get('name'))}' got new id {new_id} (fix the id column in your Excel)")
             pid = new_id
         used_ids.add(pid)
         rows.append(Product(
@@ -224,14 +240,14 @@ def load_csv_into_db():
     db.add_all(rows)
     db.commit()
     db.close()
-    print(f"✅ Loaded {len(rows)} products from {path}")
+    print(f"OK: Loaded {len(rows)} products from {path}")
 
 
 Base.metadata.create_all(bind=engine)
 
 
+# adds missing columns to old tables so the app does not break
 def ensure_columns():
-    """An older asanmart.db has an orders table without the new columns: add them (no data is lost)."""
     try:
         have = {c["name"] for c in sql_inspect(engine).get_columns("orders")}
         with engine.begin() as con:
@@ -241,32 +257,29 @@ def ensure_columns():
                 if col not in have:
                     con.execute(sql_text(f"ALTER TABLE orders ADD COLUMN {col} {typ}"))
     except Exception as e:
-        print(f"ℹ️ orders table check skipped: {e}")
+        print(f"Note: orders table check skipped: {e}")
     try:
         have_p = {c["name"] for c in sql_inspect(engine).get_columns("products")}
         if "is_active" not in have_p:
             with engine.begin() as con:
                 con.execute(sql_text("ALTER TABLE products ADD COLUMN is_active INTEGER DEFAULT 1"))
     except Exception as e:
-        print(f"ℹ️ products table check skipped: {e}")
+        print(f"Note: products table check skipped: {e}")
 
 
 ensure_columns()
 load_csv_into_db()
 
-# In-memory catalog (no DB query per turn -> faster)
-PRODUCTS = {}       # id -> dict
-BY_FAMILY = {}      # family -> [dict]
-BRANDS = {}         # family -> [brand, ...] sorted by number of products desc
-# ---- product pictures --------------------------------------------------------------------------------------
-# The backend finds the picture of every product by itself and serves it, so the frontend only shows `image_url`.
-# It looks inside frontend/public (or IMAGES_DIR) for  <id>.png/.jpg/.jpeg/.webp  or  <product-name-slug>.png.
+# filled from the database when the server starts
+PRODUCTS = {}
+BY_FAMILY = {}
+BRANDS = {}
 API_BASE = os.getenv("API_BASE", "http://localhost:8000").rstrip("/")
 _here = os.path.dirname(os.path.abspath(__file__))
 IMAGES_DIR = next((d_ for d_ in [os.getenv("IMAGES_DIR", ""), os.path.join(_here, "..", "frontend", "public"),
                                  os.path.join(_here, "public"), os.path.join(_here, "images")] if d_ and os.path.isdir(d_)), None)
 _IMG_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif")
-_IMG_INDEX = {}      # stem -> [relative paths]
+_IMG_INDEX = {}
 if IMAGES_DIR:
     app.mount("/pics", StaticFiles(directory=IMAGES_DIR), name="pics")
     for _root, _dirs, _files in os.walk(IMAGES_DIR):
@@ -280,8 +293,6 @@ def _slug(x):
     return re.sub(r"[^a-z0-9]+", "-", (x or "").lower()).strip("-")
 
 
-# Pictures kept in Supabase Storage (or any CDN): set IMAGE_BASE_URL and run upload_images_to_supabase.py once,
-# it writes image_map.json (product id -> file name in the bucket).
 IMAGE_BASE_URL = os.getenv("IMAGE_BASE_URL", "").rstrip("/")
 try:
     with open(os.path.join(_here, "image_map.json"), encoding="utf-8") as _f:
@@ -290,16 +301,15 @@ except Exception:
     IMAGE_MAP = {}
 
 
+# finds the picture file of a product
 def find_image(pid, name, subcategory, cell):
-    """Storage URL (if IMAGE_BASE_URL is set) -> dataset path if the file exists -> <id>.ext (prefer the right folder)
-    -> <name-slug>.ext -> None"""
     if IMAGE_BASE_URL and IMAGE_MAP.get(str(pid)):
         return f"{IMAGE_BASE_URL}/{IMAGE_MAP[str(pid)]}"
     cell = (cell or "").strip()
-    if cell.startswith("="):                      # broken Excel formula, not a real path
+    if cell.startswith("="):
         cell = ""
     if not IMAGES_DIR:
-        return cell if cell.startswith(("/", "http")) else None   # let the frontend try the path itself
+        return cell if cell.startswith(("/", "http")) else None
     cell = cell.replace("%20", " ")
     if cell.startswith("/") and os.path.isfile(os.path.join(IMAGES_DIR, cell.lstrip("/"))):
         return f"{API_BASE}/pics{cell.replace(' ', '%20')}"
@@ -309,20 +319,16 @@ def find_image(pid, name, subcategory, cell):
             continue
         pref = [p_ for p_ in paths if _slug(subcategory).split("-")[0] in p_.lower()]
         return f"{API_BASE}/pics{(pref or paths)[0].replace(' ', '%20')}"
-    return cell.replace(" ", "%20") if cell.startswith(("/", "http")) else None   # backend can't see the file: frontend may
+    return cell.replace(" ", "%20") if cell.startswith(("/", "http")) else None
 
 
 @app.get("/debug/images")
 def debug_images():
-    """Open http://localhost:8000/debug/images to see why a picture is not found."""
     return {"images_dir": IMAGES_DIR, "files_found": sum(len(v) for v in _IMG_INDEX.values()),
             "sample_files": [v[0] for v in list(_IMG_INDEX.values())[:10]],
             "sample_products": [{"id": p_["id"], "name": p_["name"], "image_url": p_["image_url"]} for p_ in list(PRODUCTS.values())[:10]]}
 
 
-# ---- the agent LEARNS from confirmed orders -----------------------------------------------------------------
-# When an order is confirmed, the words the customer used for each item are remembered for that product
-# (e.g. "لعل لوبیا" -> Red Kidney Beans). Next time those words find the product directly. Delete the file to reset.
 LEARN_PATH = os.getenv("LEARN_PATH", os.path.join(_here, "learned_aliases.json"))
 LOG_PATH = os.getenv("TURN_LOG", os.path.join(_here, "logs", "turns.jsonl"))
 try:
@@ -350,11 +356,11 @@ def learn_from_cart():
         try:
             json.dump({str(k): v for k, v in LEARNED.items()}, open(LEARN_PATH, "w", encoding="utf-8"), ensure_ascii=False)
         except Exception as e:
-            print(f"⚠️ could not save learned aliases: {e}")
+            print(f"Warning: could not save learned aliases: {e}")
 
 
+# saves every conversation turn so we can check it later
 def log_turn(stage, family, utt, reply):
-    """Every turn is written to logs/turns.jsonl; turns where the agent said 'sorry' are the ones to study."""
     try:
         os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
         failed = reply.strip().startswith(("Sorry", "معذرت"))
@@ -367,7 +373,6 @@ def log_turn(stage, family, utt, reply):
 
 @app.get("/debug/failures")
 def debug_failures():
-    """Open http://localhost:8000/debug/failures — the last turns the agent did not understand."""
     try:
         rows = [json.loads(l) for l in open(LOG_PATH, encoding="utf-8")]
     except Exception:
@@ -375,14 +380,13 @@ def debug_failures():
     return [r for r in rows if r["failed"]][-50:]
 
 
-BRAND_FAMS = {}     # brand (lower case, English and Urdu) -> set of families it sells in
-BRAND_UR = {}       # brand -> Urdu-script name (from the brand_ur column)
-DATA_ALIASES = {}   # family -> spoken words collected from the aliases column
+BRAND_FAMS = {}
+BRAND_UR = {}
+DATA_ALIASES = {}
 
 
+# groups products by family (rice, flour, milk and so on)
 def canonical_families(names):
-    """One dataset often spells the same family several ways ("BodyWash" / "Bodywash", "Spread" / "Spreads" /
-    "Spreads & Honey"). They are merged into the most used spelling (preferring a name the agent already has words for)."""
     def key(n):
         k = re.split(r"\s*(?:&|,| and )\s*", (n or "").lower())[0]
         k = re.sub(r"[^a-z\u0600-\u06ff]", "", k)
@@ -398,12 +402,11 @@ def canonical_families(names):
             known = globals().get("FAMILY_ALIASES", {})
             best = max(variants, key=lambda v: (v in known, variants[v]))
             canon.update({v: best for v in variants})
-            print(f"ℹ️ Same family written differently in your dataset, merged into '{best}': {', '.join(v for v in variants if v != best)}")
+            print(f"Note: Same family written differently in your dataset, merged into '{best}': {', '.join(v for v in variants if v != best)}")
     return canon
 
 
 def nice_size(package_size, unit):
-    """'200.0' + 'g' -> '200 g', '6' + 'Pieces' -> '6 pcs' (so the agent can compare sizes by unit)."""
     size, unit = (package_size or "").strip(), (unit or "").strip()
     if size and re.fullmatch(r"\d+(?:\.\d+)?", size) and unit:
         num = float(size)
@@ -412,6 +415,7 @@ def nice_size(package_size, unit):
     return size or unit or "pack"
 
 
+# builds the catalogue in memory (families, brands, types, sizes) from the products
 def build_catalog():
     PRODUCTS.clear(); BY_FAMILY.clear(); BRANDS.clear(); BRAND_UR.clear(); DATA_ALIASES.clear(); BRAND_FAMS.clear()
     db = SessionLocal()
@@ -435,7 +439,6 @@ def build_catalog():
                     BRAND_FAMS.setdefault(key_, set()).add(p.subcategory)
         for a in re.split(r"[;,،]", p.aliases or ""):
             a = a.strip()
-            # short spoken words only: no digits, max 3 words, no brand inside (brands are matched separately)
             if (a and len(a.split()) <= 3 and not re.search(r"\d", a)
                     and (p.brand or "").lower() not in a.lower() and (p.brand_ur or "\0") not in a):
                 DATA_ALIASES.setdefault(p.subcategory, set()).add(a)
@@ -449,18 +452,16 @@ def build_catalog():
 
 
 build_catalog()
-print("📦 Families in your dataset:", ", ".join(sorted(BY_FAMILY)))
+print("Families in your dataset:", ", ".join(sorted(BY_FAMILY)))
 _no_pic = [p_["id"] for p_ in PRODUCTS.values() if not p_["image_url"]]
-print(f"🖼️ Pictures: folder = {IMAGES_DIR or 'NOT FOUND (set IMAGES_DIR)'} | {len(PRODUCTS) - len(_no_pic)}/{len(PRODUCTS)} products have a picture"
+print(f"Pictures: folder = {IMAGES_DIR or 'NOT FOUND (set IMAGES_DIR)'} | {len(PRODUCTS) - len(_no_pic)}/{len(PRODUCTS)} products have a picture"
       + (f" | missing ids: {_no_pic[:40]}{'...' if len(_no_pic) > 40 else ''}" if _no_pic else ""))
 
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-gemini_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None   # no key -> rules only
+gemini_client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
-# ============================================================
-# ALIASES — how people actually say each item family
-# ============================================================
 
+# other names (Urdu, Roman Urdu) people use for each product family
 FAMILY_ALIASES = {
     "Flour": ["atta", "aata", "flour", "maida", "besan", "آٹا", "آٹے", "میدہ", "بیسن"],
     "Rice": ["rice", "chawal", "chaawal", "chaval", "چاول"],
@@ -491,7 +492,6 @@ FAMILY_ALIASES = {
     "Cotton & Swabs": ["cotton", "swabs", "ear buds", "earbuds", "روئی"],
     "Veet": ["veet", "hair removal", "ویٹ"],
 }
-# when both of these match, the more specific one wins
 SPECIFIC_OVER = {"Olive Oil": "Oil & Ghee", "Frozen Chicken": "Fresh Chicken", "Ghee": "Oil & Ghee"}
 SPECIFIC_OVER_MORE = {"Olive Oil": "Cooking Oil", "Ghee": "Cooking Oil"}
 SPECIFIC_OVER_MORE_2 = {"Tea Whitener": "Tea", "Milk Powder": "Milk", "Instant Drinks": "Soft Drinks", "Juices": "Fruits",
@@ -505,7 +505,7 @@ FAMILY_UR = {
     "Bath & Body": "صابن اور باڈی واش", "Shampoo & Conditioner": "شیمپو", "Tissues": "ٹشو",
 }
 
-for _fam, _cfg in FAMILY_SHEET.items():            # spoken words kept in the dataset itself (no code change needed)
+for _fam, _cfg in FAMILY_SHEET.items():
     _have = FAMILY_ALIASES.setdefault(_fam, [])
     for _w in re.split(r"[,،]", _cfg["en"] + "," + _cfg["ur"]):
         _w = _w.strip()
@@ -514,7 +514,7 @@ for _fam, _cfg in FAMILY_SHEET.items():            # spoken words kept in the da
     if _cfg["name_ur"]:
         FAMILY_UR[_fam] = _cfg["name_ur"]
 
-for _fam, _items in BY_FAMILY.items():              # Urdu name of a family the code doesn't know: its most common plain Urdu alias
+for _fam, _items in BY_FAMILY.items():
     if _fam not in FAMILY_UR:
         _cnt = {}
         _brands_ur = {q.get("brand_ur") for q in _items}
@@ -528,12 +528,10 @@ for _fam, _items in BY_FAMILY.items():              # Urdu name of a family the 
 
 for _fam in BY_FAMILY:
     if _fam not in FAMILY_ALIASES:
-        # still reachable: people can at least say the family's own name
         FAMILY_ALIASES[_fam] = [_fam.lower()]
-        print(f"ℹ️ No spoken aliases for '{_fam}' — using its own name. Add it to FAMILY_ALIASES for Urdu/Roman words")
+        print(f"Note: No spoken aliases for '{_fam}' — using its own name. Add it to FAMILY_ALIASES for Urdu/Roman words")
 
 
-# extra spoken words, so "toothbrush" / "toilet paper" / "hand wash" can be recognised directly
 for _fam, _extra in {
     "Oral Care": ["tooth paste", "tooth brush", "brush", "mouth wash", "ماؤتھ واش"],
     "Bath & Body": ["hand wash", "handwash", "body mist", "mist", "ہینڈ واش"],
@@ -547,8 +545,6 @@ for _fam, _extra in {
 }.items():
     FAMILY_ALIASES[_fam] += _extra
 
-# words from the dataset's `aliases` column (e.g. "masoor", "کینولا") -> added to their family.
-# A word that belongs to two families (e.g. "spread" / "chicken") is ambiguous, so it is dropped.
 _owner = {}
 for _fam, _words in DATA_ALIASES.items():
     for _w in _words:
@@ -560,7 +556,6 @@ for _fam, _words in DATA_ALIASES.items():
         if _w.lower() not in (x.lower() for x in _have):
             _have.append(_w.lower() if _w.isascii() else _w)
 
-# spoken word -> product type inside the family (must match labels in TYPE_KEYWORDS)
 ALIAS_TYPE = {
     "Oral Care": {"toothpaste": "toothpaste", "tooth paste": "toothpaste", "ٹوتھ پیسٹ": "toothpaste", "منجن": "toothpaste",
                   "toothbrush": "toothbrush", "tooth brush": "toothbrush", "brush": "toothbrush", "ٹوتھ برش": "toothbrush",
@@ -588,9 +583,6 @@ ALIAS_TYPE = {
 }
 
 
-# Everyday items that may sit under any family name in the dataset (or have no family of their own, e.g. rice).
-# "say" = how people ask for it (English / Roman Urdu / Urdu script), "find" = words to look for in product names.
-# To support a new item, just add a line here.
 EXTRA_ITEMS = {
     "rice":     {"say": ["rice", "chawal", "chaawal", "chaval", "چاول"], "find": ["rice", "basmati", "sella", "chawal"], "ur": "چاول"},
     "milk":     {"say": ["milk", "doodh", "dudh", "دودھ"], "find": ["milk"], "ur": "دودھ"},
@@ -615,7 +607,6 @@ def _name_has(name, words):
 
 
 def kw_family(term):
-    """Which dataset family holds most of the products whose NAME mentions this item (None if there are none)."""
     if term not in _KW_FAMILY:
         counts = {}
         for fam, items in BY_FAMILY.items():
@@ -630,7 +621,7 @@ def detect_extra(text, found):
     out = []
     low = text.lower()
     for term, cfg in EXTRA_ITEMS.items():
-        if any(term in f.lower() for f, _ in found):       # the dataset already has a family with this name
+        if any(term in f.lower() for f, _ in found):
             continue
         at = -1
         for a in cfg["say"]:
@@ -642,7 +633,7 @@ def detect_extra(text, found):
             if at_a >= 0 and (at < 0 or at_a < at):
                 at = at_a
         fam = kw_family(term) if at >= 0 else None
-        if fam and (fam, None) in found:         # the family already covers this word (onion -> Vegetables)
+        if fam and (fam, None) in found:
             continue
         if fam:
             out.append(((fam, "kw:" + term), at))
@@ -650,7 +641,6 @@ def detect_extra(text, found):
 
 
 def find_native(text, a):
-    """Position of an Urdu word; very short words (2-3 letters) must be a whole word, not part of another word."""
     if len(a) > 3:
         return text.find(a)
     m = re.search(rf"(?<![\u0600-\u06FF]){re.escape(a)}(?![\u0600-\u06FF])", text)
@@ -658,8 +648,6 @@ def find_native(text, a):
 
 
 def _drop_explained(text, found):
-    """"apple jam": 'apple' alone would start Fruits, but the dataset has a product 'Apple Jam' that explains BOTH words,
-    so only its family counts. Same for 'tea whitener', 'chicken spread' ... (no word list needed)."""
     allp = list(PRODUCTS.values())
     scores = rank_products(allp, text)
     if not scores or max(scores) <= 0:
@@ -690,11 +678,10 @@ def _drop_explained(text, found):
     return keep
 
 
+# finds which product families the customer said in a sentence
 def detect_families(text: str):
-    """Returns [(family, product_type_or_None)] in the ORDER the user said them.
-    'toothbrush' -> ('Oral Care', 'toothbrush')."""
     low = text.lower()
-    pos = {}                                  # (family, type) -> position of first mention
+    pos = {}
     for fam, aliases in FAMILY_ALIASES.items():
         if fam not in BY_FAMILY:
             continue
@@ -704,16 +691,15 @@ def detect_families(text: str):
                 m = re.search(rf"(?<![a-z]){re.escape(a)}(?:s|es)?(?![a-z])", low)
                 at = m.start() if m else -1
             else:
-                if a == "ایل" and re.search(r"(ایم|ملی)\s*ایل", text):      # "250 ایم ایل" is ml, not oil
+                if a == "ایل" and re.search(r"(ایم|ملی)\s*ایل", text):
                     continue
-                if a == "گی" and len(re.findall(r"\w+", text)) > 1:      # "گی" alone is how STT writes ghee; inside a sentence it is "لوں گی" (will take)
+                if a == "گی" and len(re.findall(r"\w+", text)) > 1:
                     continue
                 at = find_native(text, a)
             if at < 0:
                 continue
             key = (fam, amap.get(a))
             pos[key] = min(at, pos.get(key, at))
-        # a typed mention ("toothbrush") makes the generic family mention redundant
         if any(k[0] == fam and k[1] for k in pos):
             pos.pop((fam, None), None)
     answering = False
@@ -722,8 +708,8 @@ def detect_families(text: str):
         said_ = [w for w in _tokens(text) if w not in skip_ and not w.isdigit()]
         ctx_ = set().union(*[_product_tokens(p_) for p_ in (current.get("all_variants") or current.get("pool") or [])]) \
             if (current.get("all_variants") or current.get("pool")) else set()
-        answering = any(_tok_strength(w, t_) >= 0.8 for w in said_ for t_ in ctx_)   # the words fit the item we are asking about
-    for fam_, at_ in ([] if answering else infer_families(text, {f for f, _ in pos})):      # words learned from the dataset itself
+        answering = any(_tok_strength(w, t_) >= 0.8 for w in said_ for t_ in ctx_)
+    for fam_, at_ in ([] if answering else infer_families(text, {f for f, _ in pos})):
         pos.setdefault((fam_, None), at_)
     found = [k for k, _ in sorted(pos.items(), key=lambda kv: kv[1])]
     present = {f for f, _ in found}
@@ -732,7 +718,7 @@ def detect_families(text: str):
             found = [(f, pt) for f, pt in found if f != general]
     if "peanut butter" in low and low.count("butter") == low.count("peanut butter"):
         found = [(f, pt) for f, pt in found if f != "Butter & Margarine"]
-    if not found:                              # only a brand was said ("Pepsi chahiye") and it sells in ONE family
+    if not found:
         hits = []
         for key_, fams_ in BRAND_FAMS.items():
             if len(fams_) != 1 or len(key_) < 3:
@@ -743,7 +729,7 @@ def detect_families(text: str):
                 hits.append(((next(iter(fams_)), None), pos_))
         found = [k for k, _ in sorted(hits, key=lambda kv: kv[1])]
     extra = detect_extra(text, found)
-    if extra:                                  # keep everything in the order it was spoken
+    if extra:
         placed = [(k, pos.get(k, 0)) for k in found] + extra
         found = [k for k, _ in sorted(placed, key=lambda kv: kv[1])]
     if len(found) >= 2:
@@ -756,10 +742,8 @@ def detect_families(text: str):
 _RESCUE_CACHE = {}
 
 
+# if no family was found, tries to match the words with real product names
 def _rescue_by_catalogue(text, found):
-    """"Lays / leis in french cheese flavor": the word 'cheese' points to the Cheese family, but the rare words together
-    ('french' + 'cheese') belong to Lay's chips. When one product of ANOTHER family matches the sentence clearly better than
-    anything in the family we found, that family is the right one. Only for the clear single-family case."""
     fams = {f for f, _ in found}
     if len(fams) != 1 or len(PRODUCTS) < 20 or len(tokens(text)) < 2:
         return found
@@ -775,10 +759,10 @@ def _rescue_by_catalogue(text, found):
             bp = allp[scores.index(best)]
             mine = max((sc for p, sc in zip(allp, scores) if p["family"] in fams), default=0.0)
             if best >= 3.0 and bp["family"] not in fams and best >= mine + 1.5 and bp["family"] in BY_FAMILY:
-                print(f"🔁 family corrected by product words: {sorted(fams)} -> {bp['family']}  ({bp['name']})")
+                print(f"family corrected by product words: {sorted(fams)} -> {bp['family']}  ({bp['name']})")
                 result = [(bp["family"], None)]
     except Exception as e:
-        print(f"⚠️ family check skipped: {e}")
+        print(f"Warning: family check skipped: {e}")
     if len(_RESCUE_CACHE) > 500:
         _RESCUE_CACHE.clear()
     _RESCUE_CACHE[key] = result
@@ -786,7 +770,6 @@ def _rescue_by_catalogue(text, found):
 
 
 def detect_for_utt(utt):
-    """Run detection on each transcript separately (so the spoken order is kept) and merge."""
     a, b = detect_families(utt.en), detect_families(utt.ur)
     base, other = (a, b) if len(a) >= len(b) else (b, a)
     return base + [p for p in other if p not in base]
@@ -796,7 +779,6 @@ _POOL_CACHE = {}
 
 
 def pool_for(fam, ptype):
-    """Products to choose from: the whole family, or only the chosen type (e.g. only toothbrushes)."""
     key = (fam, ptype)
     if key not in _POOL_CACHE:
         items = BY_FAMILY.get(fam, [])
@@ -815,22 +797,18 @@ def brands_in(pool):
     return sorted(counts, key=lambda b: (-counts[b], b.lower()))
 
 
-# ============================================================
-# SESSION STATE
-# ============================================================
-
-current_cart = []     # [{id, name, brand, family, quantity, unit_price, size}]
-queue = []            # item families still to be handled
-current = None        # {"family", "stage": brand|variant|quantity, "brand", "variants", "product"}
+current_cart = []
+queue = []
+current = None
 order_pending_confirmation = False
-checkout_ready = False    # CHECKOUT_MODE=store: the customer said "confirm" -> the website opens its own checkout
+checkout_ready = False
 session_language = None
-language_chosen = False   # the agent asks "English or Urdu?" first; true once the user has answered
-SLOTS_EXTRA = {}      # (family, type) -> more slots when the SAME family is asked twice ("white chana and moong daal")
-SLOTS = {}            # (family, type) -> {"clause": what the user said about it, "qty": "2 kilo" or None}
+language_chosen = False
+SLOTS_EXTRA = {}
+SLOTS = {}
 
 
-CURRENT_USER = None   # Supabase user id of the customer whose turn is being processed (None = guest)
+CURRENT_USER = None
 CURRENT_SID = None
 
 
@@ -844,20 +822,13 @@ def reset_session_state():
     SLOTS, SLOTS_EXTRA = {}, {}
 
 
-# ============================================================
-# MANY CUSTOMERS AT ONCE
-# ============================================================
-# Every customer (browser tab / logged-in user) has its own SessionState: cart, queue, current question, language.
-# The code above works on the module variables, so before a turn the customer's state is switched in and afterwards
-# it is saved back. Only the "thinking" part of a turn is serialised (it takes milliseconds); the slow parts
-# (speech-to-text, text-to-speech) of different customers run in parallel.
-# REDIS_URL (optional) keeps the states in Redis, so they survive a restart and work with several server processes.
-
+# the fields of a session that are saved
 STATE_FIELDS = ("current_cart", "queue", "current", "order_pending_confirmation", "checkout_ready", "session_language", "language_chosen",
                 "SLOTS", "SLOTS_EXTRA")
 SESSION_TTL = int(os.getenv("SESSION_TTL_SECONDS", "7200"))
-SESSIONS = {}              # session id -> SessionState (memory)
+SESSIONS = {}
 _STATE_LOCK = None
+# Redis is optional, without it sessions stay in memory
 REDIS_URL = os.getenv("REDIS_URL", "")
 _redis = None
 if REDIS_URL:
@@ -865,12 +836,13 @@ if REDIS_URL:
         import redis as _redis_lib
         _redis = _redis_lib.Redis.from_url(REDIS_URL, decode_responses=True)
         _redis.ping()
-        print("✅ Redis connected: conversations survive restarts")
+        print("OK: Redis connected: conversations survive restarts")
     except Exception as e:
-        print(f"⚠️ Redis not used ({e}) — conversations are kept in memory")
+        print(f"Warning: Redis not used ({e}) — conversations are kept in memory")
         _redis = None
 
 
+# everything we remember about one customer: basket, current item, stage, language
 class SessionState:
     def __init__(self, sid, user_id=None):
         self.sid, self.user_id, self.touched = sid, user_id, time.time()
@@ -881,7 +853,6 @@ class SessionState:
 
 
 def _dehyd(o):
-    """State -> plain JSON (catalogue products are stored by id, tuples / tuple-keyed dicts are tagged)."""
     if isinstance(o, dict):
         if "id" in o and "family" in o and "price" in o and "brand" in o and PRODUCTS.get(o["id"]) is o:
             return {"__pid": o["id"]}
@@ -933,7 +904,7 @@ def _fetch_state(sid, user_id):
                 st.user_id = user_id or st.user_id
                 return st
         except Exception as e:
-            print(f"⚠️ Redis read failed: {e}")
+            print(f"Warning: Redis read failed: {e}")
     st = SESSIONS.get(sid)
     if st is None:
         st = SessionState(sid, user_id)
@@ -943,7 +914,6 @@ def _fetch_state(sid, user_id):
 
 
 def peek_session(sid):
-    """(language, language_chosen) of a customer without switching state in — used before speech-to-text."""
     st = SESSIONS.get(sid)
     if st is None and _redis is not None:
         try:
@@ -962,8 +932,8 @@ def _purge_sessions():
         SESSIONS.pop(k, None)
 
 
+# loads the customer's session before a request and saves it after
 class use_session:
-    """async with use_session(sid, user_id): ...  -> the module variables hold THIS customer's state inside the block."""
     def __init__(self, sid, user_id=None):
         self.sid, self.user_id = sid or "default", user_id
 
@@ -993,14 +963,13 @@ class use_session:
                 try:
                     _redis.set(f"asanmart:session:{self.sid}", _state_to_json(self.st), ex=SESSION_TTL)
                 except Exception as e:
-                    print(f"⚠️ Redis write failed: {e}")
+                    print(f"Warning: Redis write failed: {e}")
             _purge_sessions()
         finally:
             _STATE_LOCK.release()
         return False
 
 
-# ---- who is calling? (Supabase login is optional) -------------------------------------------------------------
 def _env_any(*names):
     for n in names:
         v = (os.getenv(n) or "").strip().strip('"').strip("'")
@@ -1009,27 +978,27 @@ def _env_any(*names):
     return ""
 
 
-# the same values the frontends use are accepted too (VITE_ prefix), so copying them over as they are also works
 SUPABASE_URL = _env_any("SUPABASE_URL", "VITE_SUPABASE_URL").rstrip("/")
 SUPABASE_ANON_KEY = _env_any("SUPABASE_ANON_KEY", "SUPABASE_KEY", "VITE_SUPABASE_ANON_KEY")
-print(f"🔐 Supabase login check: {'ON  (' + SUPABASE_URL + ')' if SUPABASE_URL and SUPABASE_ANON_KEY else 'OFF - SUPABASE_URL / SUPABASE_ANON_KEY not found in backend/.env'}")
+print(f"Supabase login check: {'ON  (' + SUPABASE_URL + ')' if SUPABASE_URL and SUPABASE_ANON_KEY else 'OFF - SUPABASE_URL / SUPABASE_ANON_KEY not found in backend/.env'}")
 REQUIRE_LOGIN = os.getenv("REQUIRE_LOGIN", "0") == "1"
-ORDER_REQUIRES_LOGIN = os.getenv("ORDER_REQUIRES_LOGIN", "1") == "1"   # guests may browse / fill the cart, but must sign in to order
-LOGIN_PROMPT = {}                                                        # session id -> True when a guest just tried to order by voice
-_TOKEN_CACHE = {}          # token -> (expires_at, user dict)
+ORDER_REQUIRES_LOGIN = os.getenv("ORDER_REQUIRES_LOGIN", "1") == "1"
+LOGIN_PROMPT = {}
+_TOKEN_CACHE = {}
 
 
+# checks the Supabase login token to know who is signed in
 def _verify_token_sync(token):
     hit = _TOKEN_CACHE.get(token)
     if hit and hit[0] > time.time():
         return hit[1]
     if not SUPABASE_URL or not SUPABASE_ANON_KEY:
-        print("⚠️ SUPABASE_URL / SUPABASE_ANON_KEY are missing in backend/.env -> nobody can be recognised as signed in")
+        print("Warning: SUPABASE_URL / SUPABASE_ANON_KEY are missing in backend/.env -> nobody can be recognised as signed in")
         return None
     try:
         r = http.get(f"{SUPABASE_URL}/auth/v1/user", headers={"apikey": SUPABASE_ANON_KEY, "Authorization": f"Bearer {token}"}, timeout=4)
         if r.status_code != 200:
-            print(f"⚠️ Supabase rejected the login token ({r.status_code}): {r.text[:160]} — check that SUPABASE_URL / SUPABASE_ANON_KEY in backend/.env are the SAME project as the frontend")
+            print(f"Warning: Supabase rejected the login token ({r.status_code}): {r.text[:160]} — check that SUPABASE_URL / SUPABASE_ANON_KEY in backend/.env are the SAME project as the frontend")
         if r.status_code == 200:
             u = r.json()
             user = {"id": u.get("id"), "email": u.get("email"), "name": (u.get("user_metadata") or {}).get("full_name"),
@@ -1039,22 +1008,20 @@ def _verify_token_sync(token):
                 _TOKEN_CACHE.clear()
             return user
     except Exception as e:
-        print(f"⚠️ token check failed: {e}")
-        if hit:                                   # network hiccup: the customer is still the same person -> keep their session
+        print(f"Warning: token check failed: {e}")
+        if hit:
             _TOKEN_CACHE[token] = (time.time() + 60, hit[1])
             return hit[1]
-        return "UNREACHABLE"                      # never seen this token and Supabase did not answer: do NOT pretend to be a guest
+        return "UNREACHABLE"
     return None
 
 
 async def identify(request):
-    """-> (session id, user dict or None). The browser sends X-Session-Id (a random id it keeps) and, when logged in,
-    Authorization: Bearer <Supabase token>. A logged-in customer keeps ONE conversation across devices."""
     auth = request.headers.get("authorization", "")
     user = None
     if auth.lower().startswith("bearer "):
         user = await asyncio.to_thread(_verify_token_sync, auth[7:].strip())
-        if user == "UNREACHABLE":                 # a guest session would look like an empty basket: ask the browser to retry instead
+        if user == "UNREACHABLE":
             raise HTTPException(status_code=503, detail="Sign-in check is slow right now, please try again.")
     if REQUIRE_LOGIN and user is None:
         raise HTTPException(status_code=401, detail="login required")
@@ -1067,7 +1034,6 @@ def t(lang, en, ur):
 
 
 def money(x, lang):
-    """Always 'rupees' in English and 'روپے' in Urdu — never 'Rs'."""
     n = round(x)
     return f"{n} روپے" if lang == "urdu" else f"{n} rupees"
 
@@ -1082,10 +1048,6 @@ def cap_join(items, cap, lang):
         s += t(lang, f" and {len(items) - cap} more", " اور مزید")
     return s
 
-
-# ============================================================
-# NUMBERS / SMALL HELPERS
-# ============================================================
 
 ARABIC_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 
@@ -1124,8 +1086,6 @@ def tokens(text):
 
 
 def wants_more(text):
-    """'next' / 'more' — but only in a SHORT sentence. 'aur' / 'اور' also means 'and', so in a long sentence
-    ("...aur kuch order nahi karna...") it must not be read as 'show me the next page'."""
     return has_any(text, MORE) and len(tokens(text)) <= 6
 
 
@@ -1135,6 +1095,7 @@ def has_any(text, words):
     return any((w in toks) if " " not in w else (w in low) for w in words)
 
 
+# reads a quantity from words like 'two' or 'do kilo' using rules only
 def parse_quantity_rules(text: str):
     text = text.translate(ARABIC_DIGITS)
     m = re.search(r"\d+(\.\d+)?", text)
@@ -1150,10 +1111,7 @@ def fmt_qty(q):
     return str(int(q)) if float(q).is_integer() else str(q)
 
 
-# ============================================================
-# LLM HELPERS (only used when the rules above can't decide)
-# ============================================================
-
+# calls Gemini (only used when our own rules cannot decide)
 def _gemini_sync(prompt, max_tokens, system=None, json_mode=False, history=None):
     if gemini_client is None:
         raise RuntimeError("GEMINI_API_KEY is not set")
@@ -1163,11 +1121,11 @@ def _gemini_sync(prompt, max_tokens, system=None, json_mode=False, history=None)
     return gemini_client.models.generate_content(model=GEMINI_MODEL, contents=contents, config=cfg).text.strip()
 
 
-GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "3.5"))     # seconds: a slow Gemini call must never freeze the agent
+# a slow Gemini call must not freeze the agent
+GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "3.5"))
 
 
 async def _agem(*args):
-    """Gemini call that gives up after GEMINI_TIMEOUT seconds (the caller then uses its normal fallback)."""
     return await asyncio.wait_for(asyncio.to_thread(_gemini_sync, *args), GEMINI_TIMEOUT)
 
 
@@ -1175,19 +1133,19 @@ async def _aextract(text, language, history):
     try:
         return await asyncio.wait_for(asyncio.to_thread(understand_and_extract, text, language, history), GEMINI_TIMEOUT + 1.5)
     except Exception as e:
-        print(f"⚠️ Gemini timeout/failed: {e!r}")
+        print(f"Warning: Gemini timeout/failed: {e!r}")
         return {"intent": "chat", "items": [], "reply_text": ""}
 
 
+# asks Gemini to pick the product when the rules are not sure
 async def llm_pick(user_text: str, options: list, what: str):
-    """Returns the index of the option the user meant, or None."""
     listing = "\n".join(f"{i + 1}. {o}" for i, o in enumerate(options))
     prompt = (f'The user was asked to choose {what} from:\n{listing}\nUser said (may be Urdu script / Roman Urdu / English): '
               f'"{user_text}"\nReply with ONLY the number of the best match, or NONE if unclear.')
     try:
         out = await _agem(prompt, 8)
     except Exception as e:
-        print(f"⚠️ llm_pick failed: {e}")
+        print(f"Warning: llm_pick failed: {e}")
         return None
     m = re.search(r"\d+", out)
     if m and 1 <= int(m.group()) <= len(options):
@@ -1204,11 +1162,7 @@ async def llm_quantity(user_text: str):
         return None
 
 
-# ============================================================
-# FLOW:  item -> brands -> (pack size) -> quantity -> price -> next item
-# ============================================================
-
-TYPE_KEYWORDS = {   # (label, urdu label, strong keywords found in product names)
+TYPE_KEYWORDS = {
     "Oral Care": [("toothpaste", "ٹوتھ پیسٹ", ["toothpaste", "tooth paste", "paste", "ٹوتھ پیسٹ", "پیسٹ"]),
                   ("toothbrush", "ٹوتھ برش", ["toothbrush", "tooth brush", "brush", "ٹوتھ برش", "برش"]),
                   ("mouthwash", "ماؤتھ واش", ["mouthwash", "mouth wash", "ماؤتھ واش"])],
@@ -1240,7 +1194,7 @@ TYPE_KEYWORDS = {   # (label, urdu label, strong keywords found in product names
                              ("bakery items", "بیکری آئٹمز", ["croissant", "sheermal", "papay", "combo"])],
 }
 
-TYPE_WEAK = {       # used only when no strong keyword matched (dataset names that don't say what they are)
+TYPE_WEAK = {
     "Oral Care": {"toothpaste": ["gel", "fluoride", "whitening", "sensitive", "caries", "dentifrice", "crystals",
                                  "mineral", "red hot", "icy"],
                   "toothbrush": ["miswak", "multi colour", "morning fresh"], "mouthwash": ["listerine"]},
@@ -1275,15 +1229,14 @@ def type_label(fam, label, lang):
 
 
 def short_name(p):
-    """Drop the brand prefix and dataset truncation so spoken names are short."""
     n = p["name"]
     if p["brand"] and n.lower().startswith(p["brand"].lower()):
         n = n[len(p["brand"]):].lstrip(" -:")
     return (n.rstrip(". ") or p["name"])
 
 
+# takes the next item from the queue and asks its first question
 def start_next(lang):
-    """Pops the next family from the queue and asks about its brands."""
     global current
     if current is not None:
         return None
@@ -1292,13 +1245,13 @@ def start_next(lang):
         if fam not in BY_FAMILY:
             continue
         pool = pool_for(fam, ptype)
-        slot = SLOTS.pop((fam, ptype), None)       # what the user already told us about this item
+        slot = SLOTS.pop((fam, ptype), None)
         if slot is None and SLOTS_EXTRA.get((fam, ptype)):
             slot = SLOTS_EXTRA[(fam, ptype)].pop(0)
         if slot and slot.get("clause"):
-            pool = narrow_products(pool, slot["clause"])   # "Dalda cooking oil" -> only Dalda cooking oils
+            pool = narrow_products(pool, slot["clause"])
             cp = count_as_pack(slot["clause"], pool)
-            if cp:                                         # "six eggs" -> only the packs of 6
+            if cp:
                 pool = cp[1]
         brands = brands_in(pool)
         current = {"family": fam, "ptype": ptype, "pool": pool, "brands": brands, "stage": "brand", "brand": None,
@@ -1307,7 +1260,7 @@ def start_next(lang):
             return after_brand(lang, brands[0])
         if slot:
             said = match_brand_rules(slot["clause"], brands, strict=True)
-            if said:                               # brand already given and it exists -> don't read the brands again
+            if said:
                 d, s_ = after_brand(lang, said)
                 pre = t(lang, f"{said}. ", f"{said}۔ ")
                 return pre + d, pre + s_
@@ -1315,8 +1268,7 @@ def start_next(lang):
     return None
 
 
-# ---- brand ----------------------------------------------------------------
-
+# asks which brand the customer wants
 def ask_brand(lang, page=0):
     fam, ptype = current["family"], current["ptype"]
     brands = current["brands"]
@@ -1338,22 +1290,20 @@ def ask_brand(lang, page=0):
 
 
 def _ur_skeleton(w):
-    """Consonants only — STT writes the same brand with different vowels/ع/ئ ("معیز" / "موئز")."""
     return re.sub("[اآوىیيےئءعہۃھٰ\u064B-\u0652]", "", w)
 
 
+# matches the spoken words with a brand using rules
 def match_brand_rules(text: str, brands: list, strict: bool = False, words_only: bool = False):
-    """strict=True is used on a sentence the user said earlier ("2 kilo Sunridge atta"): only a real brand
-    mention counts, so words like "acha" or "best" never choose a brand by accident."""
     low = text.lower()
     for b in sorted(brands, key=len, reverse=True):
         if b.lower() in low:
             return b
-    for b in brands:                         # brand said in Urdu script ("ڈالڈا") — no Gemini call needed
+    for b in brands:
         ur = BRAND_UR.get(b)
         if ur and ur in text:
             return b
-        if ur:                                # STT spells Urdu brands differently ("معیز" vs "موئز")
+        if ur:
             for w in re.findall(r"[\u0600-\u06FF]+", text):
                 if w in _UR_STOP or w in FILLER:
                     continue
@@ -1372,10 +1322,10 @@ def match_brand_rules(text: str, brands: list, strict: bool = False, words_only:
         m = difflib.get_close_matches(w, list(lowmap), n=1, cutoff=0.85 if strict else 0.78)
         if m:
             return lowmap[m[0]]
-    if words_only:                           # only a brand NAME counts (no "cheap"/"expensive")
+    if words_only:
         return None
     if not strict and has_any(text.replace("'", ""), NO_PREFERENCE):
-        return next((b for b in brands if b != "Generic"), brands[0])      # "any brand" -> the most common real brand
+        return next((b for b in brands if b != "Generic"), brands[0])
     prices = {b: min(p["price"] for p in current["pool"] if p["brand"] == b) for b in brands}
     if has_any(text, CHEAP):
         return min(prices, key=prices.get)
@@ -1384,6 +1334,7 @@ def match_brand_rules(text: str, brands: list, strict: bool = False, words_only:
     return None
 
 
+# brand stage: understands the answer and moves to the next stage
 async def handle_brand(utt, lang):
     brands = current["brands"]
     brand = match_brand_rules(utt.both, brands)
@@ -1418,7 +1369,6 @@ def _tok_norm(w):
 
 
 def _tok_skel(w):
-    """Consonant skeleton with look-alike letters merged: 'ٹوتھ' and 'طوت' both become 'تت'."""
     return re.sub("[اویعہءھ]", "", _tok_norm(w).translate(_PHON))
 
 
@@ -1431,18 +1381,16 @@ _TIGHT = str.maketrans({"ز": "س", "ذ": "س", "ض": "س", "ظ": "س", "ث": "�
 
 
 def _tok_tight(w):
-    """Urdu spelling folded to how it SOUNDS: "کیلے" = "کیلا", "پیاس" = "پیاز" (z/s/zwad are one sound to the STT)."""
     n = _tok_norm(w).translate(_TIGHT)
     return re.sub("[ےیہۃ]$", "ا", n)
 
 
 @lru_cache(maxsize=200000)
 def _tok_strength(a, b):
-    """How well two words match: 1.0 same word, 0.8 same consonants, 0.6 same short consonants, 0.7 very similar spelling."""
     na, nb = _tok_norm(a), _tok_norm(b)
     if na == nb:
         return 1.0
-    if not (na.isascii() and nb.isascii()):                       # Urdu spellings differ a lot between STT runs
+    if not (na.isascii() and nb.isascii()):
         if len(na) >= 3 and _tok_tight(a) == _tok_tight(b):
             return 0.9
         sa, sb = _tok_skel(a), _tok_skel(b)
@@ -1452,7 +1400,7 @@ def _tok_strength(a, b):
             return 0.6
         if len(na) >= 3 and len(nb) >= 3 and min(len(na), len(nb)) >= max(len(na), len(nb)) - 1 \
                 and (na.startswith(nb) or na.endswith(nb) or nb.startswith(na) or nb.endswith(na)):
-            return 0.7                                         # "کلال" = "ک" + "لال" (STT glued two words)
+            return 0.7
     if len(na) >= 4 and len(nb) >= 4 and difflib.SequenceMatcher(None, na, nb).ratio() >= 0.85:
         return 0.7
     return 0.0
@@ -1474,8 +1422,6 @@ def _product_tokens(p):
 
 
 def rank_products(pool, clause):
-    """Score every product of `pool` against what the customer said (names, Urdu names, brands, the aliases column,
-    learned words). Rare words count more, exact words count more than look-alike spellings. -> list of scores or None."""
     if not clause or not pool:
         return None
     skip = set(FILLER) | set(NUM_WORDS) | set(UNIT_CANON) | _UR_STOP | set(_ONES) | set(_TENS) | _SAU | GENERIC_DESCRIBERS | CHATTER
@@ -1493,8 +1439,6 @@ def rank_products(pool, clause):
 
 
 def narrow_products(pool, clause):
-    """Understands what the customer said about ONE item by comparing it with every product. Returns the
-    best-matching products (or the whole pool when nothing stands out)."""
     if len(pool) < 2:
         return pool
     scores = rank_products(pool, clause)
@@ -1504,8 +1448,7 @@ def narrow_products(pool, clause):
     return [p for p, sc in zip(pool, scores) if sc >= best - 1e-9]
 
 
-# ---- the agent's index of the WHOLE dataset: which words belong to which item family --------------------------
-TOKEN_INDEX = {}          # phonetic word key -> {family: count}
+TOKEN_INDEX = {}
 _INDEX_READY = False
 
 
@@ -1514,16 +1457,12 @@ def _tok_key(w):
 
 
 def _tok_keys(w):
-    """Index keys of a word: the sound-alike spelling first (precise), then the consonant skeleton."""
     if w.isascii():
         return [w.lower()]
     tight = _tok_tight(w)
     return ([("T", tight)] if len(tight) >= 3 else []) + [_tok_skel(w)]
 
 
-# Everyday talk words that can also sit inside ONE product's name ("Candyland NOW Chocolate"). They must never point to a
-# product family: "can we talk in English NOW" is a language request, not an order for chocolate.
-# Units spelled out letter by letter in Urdu script ("250 ایم ایل" = 250 ml, "کے جی" = kg): never an item
 URDU_LETTER_UNITS = {"ایم", "ایل", "ملی", "ملیلیٹر", "ملی لیٹر", "جی", "جی ایم", "کے", "کے جی", "ایم جی", "ایم ایل", "لٹر", "لیٹرز", "گرامز"}
 
 COMMON_EN = {"now", "then", "today", "tomorrow", "again", "here", "there", "back", "talk", "speak", "english", "urdu",
@@ -1533,13 +1472,14 @@ COMMON_EN = {"now", "then", "today", "tomorrow", "again", "here", "there", "back
              "again", "continue", "proceed", "move", "go", "going", "come", "bye", "hello", "sure", "maybe", "really"}
 
 
+# makes a word index of all product names for quick matching
 def build_token_index():
     global _INDEX_READY
     TOKEN_INDEX.clear()
     for p in PRODUCTS.values():
         blob = " ".join([p["name"], p.get("aliases", ""), p.get("brand_ur", ""), p["brand"], " ".join(LEARNED.get(p["id"], {}))])
         words_ = {w for w in set(_tokens(blob)) if w.lower() not in COMMON_EN}
-        for phrase in [p.get("brand_ur", "")] + re.split(r"[;,،]", p.get("aliases", "")):     # "کوکا کولا" is also said as one word
+        for phrase in [p.get("brand_ur", "")] + re.split(r"[;,،]", p.get("aliases", "")):
             tk_ = [w for w in _tokens(phrase) if not w.isascii()]
             words_ |= {tk_[i] + tk_[i + 1] for i in range(len(tk_) - 1)}
         for w in words_:
@@ -1549,7 +1489,7 @@ def build_token_index():
                 if len(k if isinstance(k, str) else k[1]) >= 2:
                     TOKEN_INDEX.setdefault(k, {})
                     TOKEN_INDEX[k][p["family"]] = TOKEN_INDEX[k].get(p["family"], 0) + 1
-    for fam, words in FAMILY_ALIASES.items():           # the agent also knows each family's own spoken words
+    for fam, words in FAMILY_ALIASES.items():
         if fam in BY_FAMILY:
             for a in words:
                 for w in _tokens(a):
@@ -1560,14 +1500,11 @@ def build_token_index():
     _INDEX_READY = True
 
 
-# Describing words that happen to occur in only ONE family of the dataset (e.g. "flavor" only in a kids' toothpaste name)
-# must never decide the family: "Lay's in french cheese flavor" is chips, not toothpaste.
 GENERIC_DESCRIBERS = {"flavor", "flavors", "flavour", "flavours", "flavored", "flavoured", "taste", "tasty", "type", "types",
                       "kind", "kinds", "variety", "original", "classic", "regular", "special", "extra", "new", "kids",
                       "فلیور", "فلیورز", "ذائقہ", "ٹیسٹ", "ٹائپ", "قسم", "کلاسک", "اوریجنل", "ریگولر"}
 
 
-# conversation words that are not product words ("Yes. I want ... The offer price seventy")
 CHATTER = {"yes", "yeah", "no", "nope", "offer", "price", "prices", "rate", "cost", "rupees", "rupee", "rs", "pkr", "rupay", "want",
            "need", "give", "show", "please", "okay", "ok", "hello", "hi", "sorry", "actually", "only", "just", "too", "also", "its", "it",
            "this", "that", "those", "these", "my", "your", "in", "on", "at", "is", "are", "was", "am", "do", "does", "did", "have", "has",
@@ -1575,8 +1512,6 @@ CHATTER = {"yes", "yeah", "no", "nope", "offer", "price", "prices", "rate", "cos
 
 
 def infer_families(text, known):
-    """Finds item families from words that only (or mostly) occur in ONE family of the dataset, even when the speech
-    to text spelled them differently ("پیش" / "پیسٹ", "کال گیٹ" = Colgate). -> [(family, position)] for NEW families."""
     if not _INDEX_READY:
         build_token_index()
     skip = set(FILLER) | set(NUM_WORDS) | set(UNIT_CANON) | _UR_STOP | set(_ONES) | set(_TENS) | _SAU | GENERIC_DESCRIBERS | COMMON_EN | URDU_LETTER_UNITS
@@ -1590,13 +1525,12 @@ def infer_families(text, known):
     for i, (w, at) in enumerate(toks):
         if w in skip or w.isdigit() or (not w.isascii() and _tok_tight(w) in skip_sound):
             continue
-        # a brand said as two words ("کال گیٹ"): try the pair joined together as well
         variants = [(w, 1)]
         if i + 1 < len(toks) and not w.isascii() and not toks[i + 1][0].isascii():
             variants.append((w + toks[i + 1][0], 2))
         for cand, span in variants:
             fams = None
-            for k in _tok_keys(cand):                      # exact sound first, then the loose consonant skeleton
+            for k in _tok_keys(cand):
                 f_ = TOKEN_INDEX.get(k)
                 if f_ and len(f_) <= 2 and (isinstance(k, tuple) or cand.isascii() or len(k) >= 3):
                     fams = f_
@@ -1606,7 +1540,7 @@ def infer_families(text, known):
             for fam in fams:
                 add(fam, (1.0 if len(fams) == 1 else 0.5) * (1.0 if span == 1 else 1.2), at)
                 if len(fams) == 1:
-                    sure.add(fam)                          # at least one word that belongs to this family ONLY
+                    sure.add(fam)
     for fam in list(score):
         if fam in known or fam not in BY_FAMILY:
             score.pop(fam)
@@ -1614,8 +1548,6 @@ def infer_families(text, known):
 
 
 def narrow_by_clause(variants, clause, brand):
-    """Keep the variants whose name shares the most words with what the customer already said
-    (ignoring the brand, numbers and filler). Returns all variants when nothing matches."""
     skip = set(re.findall(r"[a-z]+", brand.lower())) | set(FILLER)
     for al in FAMILY_ALIASES.get(current["family"], []):
         skip |= set(re.findall(r"[a-z]+", al.lower()))
@@ -1635,18 +1567,18 @@ def after_brand(lang, brand):
     fam = current["family"]
     variants = sorted([p for p in current["pool"] if p["brand"] == brand], key=lambda p: p["price"])
     current["variants"] = variants
-    current["all_variants"] = variants              # kept in full, even after the list is narrowed down
+    current["all_variants"] = variants
     if len(variants) == 1:
         return select_product(lang, variants[0])
     said = (current.get("slot") or {}).get("qty")
-    if said:                                       # "1 kg rice": jump straight to the 1 kg pack if there is one
+    if said:
         want = size_pairs(numwords_to_digits(said))
         hits = [v for v in variants if same_size(want, size_pairs(v["name"] + " " + v["size"]))] if want else []
         if len(hits) == 1:
             return select_product(lang, hits[0])
         if 1 < len(hits) < len(variants):
             return ask_variant(lang, hits)
-    if said or (current.get("slot") or {}).get("clause"):   # "Dawn plain bread large": use the other words he already said
+    if said or (current.get("slot") or {}).get("clause"):
         narrowed = narrow_by_clause(variants, (current.get("slot") or {}).get("clause", ""), brand)
         if len(narrowed) == 1:
             return select_product(lang, narrowed[0])
@@ -1658,7 +1590,7 @@ def after_brand(lang, brand):
             lab = product_type(fam, v["name"])
             if lab and lab not in labels:
                 labels.append(lab)
-        if len(labels) >= 2:       # first narrow by product type: "toothpaste, toothbrush or mouthwash?"
+        if len(labels) >= 2:
             current["stage"] = "type"
             current["types"] = labels
             names = t(lang, ", ", "، ").join(type_label(fam, l, lang) for l in labels)
@@ -1668,8 +1600,7 @@ def after_brand(lang, brand):
     return ask_variant(lang, variants)
 
 
-# ---- type -----------------------------------------------------------------
-
+# type stage (for example basmati or sella rice)
 async def handle_type(utt, lang):
     fam = current["family"]
     labels = current["types"]
@@ -1701,10 +1632,9 @@ def item_view(v, lang, spoken=False):
 
 
 def ui_options(lang):
-    """Data for the pop-up: ALL choices for the current question; 'spoken' marks the ones being read aloud now."""
     if current is None or current["stage"] not in ("brand", "type", "variant", "quantity"):
         return None
-    lang = "english"          # on-screen text is always English; Urdu is voice-only
+    lang = "english"
     st, fam, ptype = current["stage"], current["family"], current["ptype"]
     label = type_label(fam, ptype, lang) if ptype else fam_label(fam, lang)
     out = {"stage": st, "modal": True, "title": label, "items": [], "total": 0, "paged": False,
@@ -1744,8 +1674,7 @@ def cart_snapshot():
             "need_login": bool(LOGIN_PROMPT.pop(CURRENT_SID, False))}
 
 
-# ---- variant (pack size / product) ---------------------------------------------
-
+# reads the sizes with prices and asks the customer to choose one
 def ask_variant(lang, variants, page=0):
     current["stage"] = "variant"
     current["variants"] = variants
@@ -1798,7 +1727,6 @@ _SAU = {"sau", "سو", "hundred", "ہنڈرڈ", "ہنڈریڈ", "ہنڈرید"}
 
 
 def spoken_to_digits(text):
-    """'one sixty gram' -> '160 gram', 'پانچ سو گرام' -> '500 گرام', 'ek kilo' -> '1 kilo' (used on what the user SAID)."""
     clean = lambda w: w.lower().strip(".,،؟?!")
     FRAC = {"آدھا": "0.5", "آدھی": "0.5", "ادھا": "0.5", "aadha": "0.5", "adha": "0.5", "aadhi": "0.5", "half": "0.5",
             "ڈیڑھ": "1.5", "derh": "1.5", "dedh": "1.5", "ڈھائی": "2.5", "dhai": "2.5", "dhaai": "2.5", "سوا": "1.25", "sawa": "1.25"}
@@ -1817,7 +1745,7 @@ def spoken_to_digits(text):
             total, k = _ONES[run[0]] * 100, 2
         elif run[0] in _SAU:
             total, k = 100, 1
-        elif run[0] in _ONES and len(run) > 1 and run[1] in _TENS:        # "one sixty" = 160
+        elif run[0] in _ONES and len(run) > 1 and run[1] in _TENS:
             total, k = _ONES[run[0]] * 100, 1
         total += sum(_ONES.get(w) or _TENS.get(w) or 0 for w in run[k:])
         out.append(str(total))
@@ -1833,7 +1761,6 @@ def size_pairs(text, spoken=False):
 
 
 def keyword_hits(text, variants, brand):
-    """'herbal', 'charcoal', 'kids' ... -> products whose names contain those words."""
     toks = [w for w in re.findall(r"[a-z]{3,}", text.lower()) if w not in STOP and w not in brand.lower().split()]
     if not toks:
         return []
@@ -1852,20 +1779,20 @@ def _variant_hits(text, variants, shown, brand):
         hits = [v for v in variants if same_size(want, size_pairs(v["name"] + " " + v["size"]))]
         if hits:
             return hits
-    base = variants.index(shown[0]) if shown and shown[0] in variants else 0     # the options are read out with their number
+    base = variants.index(shown[0]) if shown and shown[0] in variants else 0
     for words_, idx in ORDINALS:
         if has_any(text, words_) and idx < len(shown):
             return [shown[idx]]
     t2 = numwords_to_digits(spoken_to_digits(text.translate(ARABIC_DIGITS))).lower()
     m_no = re.search(r"(?:number|no|option|num|nambar|آپشن|نمبر|نمبَر)\.?\s*(\d{1,2})\b", t2)
-    if m_no and 0 <= int(m_no.group(1)) - 1 - base < len(shown):                 # "number 2" / "نمبر دو"
+    if m_no and 0 <= int(m_no.group(1)) - 1 - base < len(shown):
         return [shown[int(m_no.group(1)) - 1 - base]]
-    n = parse_quantity_rules(text)      # bare "5" / "two" -> the pack whose size is 5 / 2
+    n = parse_quantity_rules(text)
     if n:
         hits = [v for v in variants if n in {p[0] for p in size_pairs(v["name"] + " " + v["size"])}]
         if hits:
             return hits
-        if float(n).is_integer() and len(tokens(text)) <= 2 and 0 <= int(n) - 1 - base < len(shown):   # just "2": option number 2
+        if float(n).is_integer() and len(tokens(text)) <= 2 and 0 <= int(n) - 1 - base < len(shown):
             return [shown[int(n) - 1 - base]]
     if has_any(text, CHEAP):
         return [min(variants, key=lambda v: v["price"])]
@@ -1880,13 +1807,12 @@ def _variant_hits(text, variants, shown, brand):
 
 def match_variant_rules(text, variants, shown, brand):
     hits = _variant_hits(text, variants, shown, brand)
-    if len(hits) > 1 and len(hits) == len(variants):    # didn't narrow anything
+    if len(hits) > 1 and len(hits) == len(variants):
         return []
     return hits
 
 
 def brand_change(utt, lang):
-    """"Don't you have Dawn bread?" while choosing a pack of another brand -> switch to that brand."""
     b = match_brand_rules(utt.both, current["brands"], strict=True, words_only=True)
     if b and b != current.get("brand"):
         d, s_ = after_brand(lang, b)
@@ -1899,8 +1825,6 @@ _COMPARATIVE = re.compile(r"cheap|expensive|big|small|large|bigger|smaller|first
 
 
 def _words_point_to(p, options, text):
-    """A short answer like just "lobia" fits several options: an LLM must not guess one of them. True when the words
-    contain something that only THIS option has (its colour / flavour / size ...), or the answer is a comparison."""
     if len(options) < 2 or p not in options or _COMPARATIVE.search(text.lower()) or len(tokens(text)) > 6:
         return True
     heard = set(tokens(text))
@@ -1915,10 +1839,9 @@ def _words_point_to(p, options, text):
 QR_RUPEE = re.compile(r"\brs\.?(?![a-z])|\brupee|\brupay|\brupiy|\brupees|\bpkr\b|روپ|رپ[یے]|رُپ|ریال", re.I)
 
 
+# lets the customer choose a size by saying its price
 def match_by_price(text, options):
-    """"fifty rupees pack" / "50 rupay wala" / "پچاس روپے والا" = the option that costs 50 (or is named 'Rs 50 Pack').
-    Only used when the customer says a money word, so a plain '50' is never taken for a price."""
-    text = re.sub("[\u064B-\u065F\u0670]", "", text or "")          # the speech-to-text sometimes adds vowel marks (فِفٹی)
+    text = re.sub("[\u064B-\u065F\u0670]", "", text or "")
     money_word = bool(QR_RUPEE.search(text.lower()))
     am = parse_amount(text)
     if am is None or am.has_unit or am.value <= 0:
@@ -1927,10 +1850,8 @@ def match_by_price(text, options):
     named = [v for v in options if re.search(rf"\brs\.?\s*{int(n)}(?!\d)", v["name"], re.I)]
     if money_word:
         return [v for v in options if abs(float(v["price"]) - n) < 0.5 or v in named]
-    # no money word ("the seventy pack", or STT wrote "seventy two piece pack"): only for options named by their price ("Rs 70 Pack")
     if n >= 5 and any(re.search(r"\brs\.?\s*\d+", v["name"], re.I) for v in options):
         return named
-    # just "fifty" while the packs cost 30 and 50 and no pack is a "50 g / 50 ml" one: it can only mean the price
     if n >= 10 and not am.has_unit:
         by_price = [v for v in options if abs(float(v["price"]) - n) < 0.5]
         sized = any(n in {p[0] for p in size_pairs(v["name"] + " " + v.get("size", ""))} for v in options)
@@ -1939,16 +1860,17 @@ def match_by_price(text, options):
     return []
 
 
+# variant stage: customer chooses a size by name, number or price
 async def handle_variant(utt, lang):
     bc = brand_change(utt, lang)
     if bc:
         return bc
     variants, shown = current["variants"], current["shown"] or current["variants"]
     full = current.get("all_variants") or variants
-    ph = match_by_price(utt.both, variants) or match_by_price(utt.both, full)      # "I want the fifty rupees pack"
+    ph = match_by_price(utt.both, variants) or match_by_price(utt.both, full)
     if ph and len(ph) < len(full):
         return select_product(lang, ph[0]) if len(ph) == 1 else ask_variant(lang, ph)
-    grp = item_groups(utt.both, full)                  # "I want both the potato and the tomato" -> take them one after another
+    grp = item_groups(utt.both, full)
     if len(grp) >= 2:
         first = narrow_products(full, grp[0]["text"])
         queue_more_items((current["family"], current["ptype"]), grp[1:])
@@ -1958,10 +1880,10 @@ async def handle_variant(utt, lang):
     hits = match_variant_rules(utt.both, variants, shown, current["brand"])
     want = size_pairs(utt.both, spoken=True)
     if full is not variants and (len(hits) != 1 or (want and not any(same_size(want, size_pairs(h["name"] + " " + h["size"])) for h in hits))):
-        h2 = match_variant_rules(utt.both, full, full, current["brand"])      # "no, the 1 kg mince" -> search ALL packs
+        h2 = match_variant_rules(utt.both, full, full, current["brand"])
         if h2 and len(h2) < len(full):
             hits = h2
-    word_hits = narrow_products(full, utt.both)               # size AND name words together ("karahi cut 1kg")
+    word_hits = narrow_products(full, utt.both)
     if len(word_hits) < len(full):
         both = [h for h in hits if h in word_hits]
         hits = both or (hits if hits else word_hits)
@@ -1971,14 +1893,14 @@ async def handle_variant(utt, lang):
         return ask_variant(lang, hits)
     if wants_more(utt.both):
         return ask_variant(lang, variants, current["page"] + 1)
-    near = narrow_products(full, utt.both)             # compares with names + the aliases column (Urdu too)
+    near = narrow_products(full, utt.both)
     if len(near) == 1:
         return select_product(lang, near[0])
     if 1 < len(near) < len(full):
         return ask_variant(lang, near)
     n_said = parse_quantity_rules(utt.both)
     if n_said and 0 < n_said <= 100 and not size_pairs(utt.both, spoken=True):
-        slot = dict(current.get("slot") or {})            # "I only want one" while choosing a pack = HOW MANY, remember it
+        slot = dict(current.get("slot") or {})
         slot["qty"] = utt.both
         current["slot"] = slot
         d, s_ = ask_variant(lang, variants, current["page"])
@@ -1995,9 +1917,8 @@ async def handle_variant(utt, lang):
     return pre + d, pre + s_
 
 
+# the customer picked a product, now we ask the quantity
 def select_product(lang, p):
-    """A product was chosen: ALWAYS ask how many. If the customer already said an amount ("2 kg chawal") the question
-    proposes the converted number of packs (2 kg of a 5 kg bag = 1 pack) and "yes" / "next" / "ji" keeps it."""
     current["product"] = p
     current["stage"] = "quantity"
     said = (current.get("slot") or {}).get("qty")
@@ -2007,10 +1928,6 @@ def select_product(lang, p):
     return d, s_
 
 
-# ====================================================================================================
-# UNIT-AWARE QUANTITIES  ("2 kg chawal" of a 5 kg bag = 1 pack, not 2 bags)
-#   parse_amount / packs_for / quantity_prompt / interpret_reply / key_info   (names prefixed QR_/_qr_ never clash)
-# ====================================================================================================
 QR_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
 
 QR_NUM_WORDS = {
@@ -2024,13 +1941,10 @@ QR_NUM_WORDS = {
     "بیس": 20, "تیس": 30, "چالیس": 40, "ساٹھ": 60, "ستر": 70, "اسی": 80, "نوے": 90,
     "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "pachas": 50, "pachaas": 50, "پچاس": 50, "bees": 20, "bis": 20, "tees": 30, "chalis": 40,
     "sawa": 1.25, "سوا": 1.25, "paune": 0.75, "pauna": 0.75, "پونے": 0.75,
-    # Urdu-script English ("ٹو ہنڈریڈ گرام", "ففٹی روپیز") - speech-to-text writes English words in Urdu letters
     "ون": 1, "ٹو": 2, "تھری": 3, "فور": 4, "فائیو": 5, "سکس": 6, "سیون": 7, "ایٹ": 8, "نائن": 9,
     "ٹوئنٹی": 20, "تھرٹی": 30, "فورٹی": 40, "ففٹی": 50, "سکسٹی": 60, "سیونٹی": 70, "ایٹی": 80, "نائنٹی": 90,
 }
 
-# unit word -> (canonical unit, dimension, multiplier to the base of that dimension)
-#   mass base = gram, volume base = ml, count base = 1 piece
 QR_UNITS = {
     "kg": ("kg", "mass", 1000), "kgs": ("kg", "mass", 1000), "kilo": ("kg", "mass", 1000), "kilos": ("kg", "mass", 1000),
     "kilogram": ("kg", "mass", 1000), "kilograms": ("kg", "mass", 1000), "کلو": ("kg", "mass", 1000),
@@ -2044,11 +1958,9 @@ QR_UNITS = {
     "pc": ("pc", "count", 1), "pcs": ("pc", "count", 1), "piece": ("pc", "count", 1), "pieces": ("pc", "count", 1),
     "عدد": ("pc", "count", 1),
 }
-# these words mean "packs" (a plain count of what the shop sells)
 QR_PACK_WORDS = {"pack", "packs", "packet", "packets", "bag", "bags", "box", "boxes", "bottle", "bottles", "tin", "tins",
               "can", "cans", "carton", "cartons", "پیک", "پیکٹ", "ڈبہ", "ڈبے", "بوتل"}
 
-# answers that mean "keep what you proposed, go on"
 QR_KEEP = {"yes", "yeah", "yep", "ok", "okay", "sure", "fine", "same", "next", "continue", "proceed", "done", "right",
         "correct", "haan", "han", "ji", "jee", "theek", "thik", "sahi", "bilkul", "wohi", "wahi", "bas", "aage", "agla",
         "agli", "chalo", "ہاں", "جی", "ٹھیک", "صحیح", "بالکل", "وہی", "بس", "آگے", "اگلا", "اگلی", "اوکے", "چلو"}
@@ -2059,9 +1971,9 @@ QR_KEEP_PHRASES = ("ek hi", "aik hi", "ایک ہی", "one only", "just one", "on
 @dataclass
 class QRAmount:
     value: float
-    unit: Optional[str] = None      # 'kg' | 'g' | 'l' | 'ml' | 'dozen' | 'pc' | None (plain number)
-    dim: Optional[str] = None       # 'mass' | 'vol' | 'count' | None
-    base: Optional[float] = None    # value in grams / ml / pieces
+    unit: Optional[str] = None
+    dim: Optional[str] = None
+    base: Optional[float] = None
 
     @property
     def has_unit(self) -> bool:
@@ -2077,9 +1989,9 @@ QR_MULT = {"ہنڈریڈ": 100, "ہنڈرڈ": 100, "ہنڈرید": 100, "ہنڈ�
 
 def _qr_words(text: str) -> list[str]:
     text = text.translate(QR_DIGITS).lower()
-    text = re.sub(r"کے\s*جی|کی\s*جی|کے\.جی", " kg ", text)            # "پانچ کے جی" = 5 kg
+    text = re.sub(r"کے\s*جی|کی\s*جی|کے\.جی", " kg ", text)
     text = re.sub(r"\bk\.?g\.?\b", " kg ", text)
-    text = re.sub(r"(\d)([a-z؀-ۿ])", r"\1 \2", text)      # 2kg -> 2 kg
+    text = re.sub(r"(\d)([a-z؀-ۿ])", r"\1 \2", text)
     text = re.sub(r"([a-z؀-ۿ])(\d)", r"\1 \2", text)
     return re.findall(r"\d+(?:\.\d+)?|[a-z؀-ۿ']+", text)
 
@@ -2090,15 +2002,13 @@ def _qr_number(tok: str) -> Optional[float]:
     return float(QR_NUM_WORDS[tok]) if tok in QR_NUM_WORDS else None
 
 
+# reads amounts like 2 kg, 500 gram, 250 ml
 def parse_amount(text: str) -> Optional[QRAmount]:
-    """First amount in the sentence.  '2 kg' / 'do kilo' / 'dedh kilo' / 'aadha kilo' / '500 gram' / '3' / 'teen packet'.
-    A bare unit ('kilo chawal') counts as 1 of that unit."""
     toks = _qr_words(text)
     for i, tok in enumerate(toks):
         n = _qr_number(tok)
         if n is None:
             continue
-        # "five hundred" / "paanch sau" / "two hundred fifty" / "ek hazar"
         j = i + 1
         if j < len(toks) and toks[j] in QR_MULT:
             n *= QR_MULT[toks[j]]
@@ -2112,8 +2022,8 @@ def parse_amount(text: str) -> Optional[QRAmount]:
         if nxt in QR_UNITS:
             u, dim, mult = QR_UNITS[nxt]
             return QRAmount(n, u, dim, n * mult)
-        return QRAmount(n)                                       # plain number = number of packs
-    for tok in toks:                                           # "kilo chawal", "litre doodh" = one of that unit
+        return QRAmount(n)
+    for tok in toks:
         if tok in ("kilo", "kg", "کلو", "litre", "liter", "لیٹر"):
             u, dim, mult = QR_UNITS[tok]
             return QRAmount(1.0, u, dim, float(mult))
@@ -2121,12 +2031,10 @@ def parse_amount(text: str) -> Optional[QRAmount]:
 
 
 def qr_pack_size(product: dict) -> Optional[tuple[str, float]]:
-    """(dimension, size of ONE pack in grams / ml / pieces) from the product's size or name.
-    Handles '5 kg', '500g', '1 L', '12 pcs', '1 dozen' and multipacks like '6 x 250 ml'."""
     for field in (product.get("size") or "", product.get("name") or ""):
         txt = field.translate(QR_DIGITS).lower()
         m = re.search(r"(\d+)\s*[x×]\s*(\d+(?:\.\d+)?)\s*([a-z]+)", txt)
-        if m and m.group(3) in QR_UNITS:                                      # 6 x 250 ml
+        if m and m.group(3) in QR_UNITS:
             _, dim, mult = QR_UNITS[m.group(3)]
             return dim, int(m.group(1)) * float(m.group(2)) * mult
         for n, u in re.findall(r"(\d+(?:\.\d+)?)\s*([a-z؀-ۿ]+)", txt):
@@ -2136,11 +2044,8 @@ def qr_pack_size(product: dict) -> Optional[tuple[str, float]]:
     return None
 
 
+# changes kg or gram into the number of packs the shop sells
 def packs_for(amount: QRAmount, product: dict) -> Optional[dict]:
-    """How many packs of `product` the spoken amount means.
-         2 kg  of a 5 kg bag  -> 1 pack, rounded up      10 kg -> 2 packs      500 g of a 1 kg pack -> 1 pack, rounded up
-         '3' (no unit)        -> 3 packs                  1.5 kg of a 1 kg pack -> 2 packs, rounded up
-    Returns None when the unit cannot be compared with the pack (e.g. '2 kg' of eggs)."""
     if not amount.has_unit:
         n = max(1.0, amount.value)
         return {"packs": n, "rounded": False, "pack_text": None}
@@ -2159,8 +2064,6 @@ def _qr_amount_text(a: QRAmount) -> str:
 
 def quantity_prompt(lang: str, product: dict, money: Callable[[float, str], str],
                     asked: Optional[QRAmount] = None) -> tuple[str, str, Optional[float]]:
-    """The question asked every time a product has been chosen.  Returns (display, speech, suggested_packs).
-    `asked` = what the customer already said for this item ('2 kg'), if anything."""
     name, price = product["name"], money(product["price"], lang)
     en = lang != "urdu"
     sug = packs_for(asked, product) if asked else None
@@ -2180,28 +2083,23 @@ def quantity_prompt(lang: str, product: dict, money: Callable[[float, str], str]
                  f"یعنی {_qr_fmt(packs)} پیک۔ ٹھیک ہے تو ہاں کہیں، یا بتائیں کتنے چاہیے۔")
         return t, t, packs
 
-    if asked and not asked.has_unit:                       # "3" -> propose 3 packs
+    if asked and not asked.has_unit:
         packs = max(1.0, asked.value)
         t = (f"{name} is {price} each. You said {_qr_fmt(packs)}. Say yes to keep {_qr_fmt(packs)}, or tell me how many."
              if en else f"{name} کی قیمت {price} ہے۔ آپ نے {_qr_fmt(packs)} کہا۔ ٹھیک ہے تو ہاں کہیں، یا بتائیں کتنے چاہیے۔")
         return t, t, packs
 
-    # nothing said yet (or a unit that does not fit this pack, e.g. "2 kg" of eggs): ask, and offer "1 / next"
     t = (f"{name} is {price} each. How many would you like? Say 1 or next to keep one and move on."
          if en else f"{name} کی قیمت {price} ہے۔ کتنے چاہیے؟ ایک رکھنا ہو تو ایک یا اگلا کہیں۔")
     return t, t, 1.0
 
 
 def interpret_reply(text: str, product: dict, suggested: Optional[float] = 1.0) -> dict:
-    """What the customer answered to the quantity question.
-        {'kind': 'keep',     'packs': suggested}              yes / next / ji / wohi / ek hi / bas
-        {'kind': 'quantity', 'packs': n, 'rounded': bool}     '3', 'teen', '2 kg' (converted to packs)
-        {'kind': 'unclear'}                                   nothing usable: ask again"""
     low = text.translate(QR_DIGITS).lower()
     amt = parse_amount(low)
     if amt is not None:
         conv = packs_for(amt, product)
-        if conv is None:                                   # unit does not fit this product: treat the number as packs
+        if conv is None:
             conv = {"packs": max(1.0, amt.value), "rounded": False}
         if conv["packs"] > 100:
             return {"kind": "unclear"}
@@ -2212,9 +2110,6 @@ def interpret_reply(text: str, product: dict, suggested: Optional[float] = 1.0) 
     return {"kind": "unclear"}
 
 
-# ---------------------------------------------------------------------------------------------------------------
-# Key-information extraction: shrink a long, noisy sentence to what the agent needs
-# ---------------------------------------------------------------------------------------------------------------
 QR_FILLERS = {
     "um", "uh", "umm", "hmm", "ok", "okay", "so", "well", "please", "pls", "kindly", "like", "actually", "basically",
     "mujhe", "mujhay", "mjhe", "mera", "meri", "hamein", "humein", "chahiye", "chahie", "chahiyen", "chaiye", "dena", "dedo",
@@ -2226,12 +2121,6 @@ QR_KEEP_ALWAYS = QR_KEEP | {"no", "nahi", "nahin", "cancel", "confirm", "next", 
 
 
 def key_info(text: str, max_words: int = 18) -> dict:
-    """Pulls out the important part of what the customer said, so the agent works on a short clean phrase:
-        'um mujhe do kilo chawal chahiye please aur ek dozen anday'
-          -> {'clean': 'kilo chawal dozen anday', 'amount': QRAmount(2, 'kg'), 'amounts': [...], 'is_keep': False}
-    * amounts keep their numbers and units (they are the heart of the sentence)
-    * fillers / politeness words are dropped; the first `max_words` words that matter are kept
-    * yes / no / next / cancel style answers are never dropped."""
     toks = _qr_words(text)
     keep: list[str] = []
     amounts: list[QRAmount] = []
@@ -2240,7 +2129,7 @@ def key_info(text: str, max_words: int = 18) -> dict:
         tok = toks[i]
         n = _qr_number(tok)
         nxt = toks[i + 1] if i + 1 < len(toks) else ""
-        if n is not None and nxt in QR_UNITS:                      # "2 kg" stays together
+        if n is not None and nxt in QR_UNITS:
             u, dim, mult = QR_UNITS[nxt]
             amounts.append(QRAmount(n, u, dim, n * mult))
             keep.append(f"{_qr_fmt(n)} {nxt}")
@@ -2249,20 +2138,18 @@ def key_info(text: str, max_words: int = 18) -> dict:
         if n is not None and re.fullmatch(r"\d+(?:\.\d+)?", tok):
             amounts.append(QRAmount(n))
             keep.append(tok)
-        elif n is not None and tok not in QR_FILLERS:              # number words (teen, paanch ...)
+        elif n is not None and tok not in QR_FILLERS:
             amounts.append(QRAmount(n))
             keep.append(tok)
         elif tok in QR_KEEP_ALWAYS or tok not in QR_FILLERS:
             keep.append(tok)
         i += 1
-    seen_adj = [w for k, w in enumerate(keep) if k == 0 or w != keep[k - 1]]   # drop stutters ("chawal chawal")
+    seen_adj = [w for k, w in enumerate(keep) if k == 0 or w != keep[k - 1]]
     clean = " ".join(seen_adj[:max_words])
     toks_set = set(toks)
     return {"clean": clean, "amount": amounts[0] if amounts else None, "amounts": amounts,
             "is_keep": bool(toks_set & QR_KEEP) or any(p in text.lower() for p in QR_KEEP_PHRASES)}
 
-
-# ---- quantity -------------------------------------------------------------
 
 BASE_UNITS = {"kg": ("mass", 1000), "g": ("mass", 1), "l": ("vol", 1000), "ml": ("vol", 1)}
 
@@ -2275,14 +2162,13 @@ def numwords_to_digits(text):
     for w in text.split():
         v = NUM_WORDS.get(w.lower())
         out.append((str(int(v)) if float(v).is_integer() else str(v)) if v is not None else w)
-    # "5 hundred" / "پانچ سو" = 500, "2 سو 50" = 250   (a number followed by a "hundred" word)
     merged, i = [], 0
     while i < len(out):
         w = out[i]
         if i + 1 < len(out) and out[i + 1].lower() in HUNDRED_WORDS and re.fullmatch(r"\d+(\.\d+)?", w):
             n = float(w) * 100
             i += 2
-            if i < len(out) and re.fullmatch(r"\d{1,2}", out[i]):     # "two hundred fifty"
+            if i < len(out) and re.fullmatch(r"\d{1,2}", out[i]):
                 n += float(out[i])
                 i += 1
             merged.append(str(int(n)))
@@ -2293,7 +2179,6 @@ def numwords_to_digits(text):
 
 
 def same_size(want, have):
-    """True when a requested size equals a pack size, in any unit ("half kilo" == 500 g, "1000 ml" == 1 L)."""
     if want & have:
         return True
     for n, u in want:
@@ -2313,8 +2198,6 @@ def base_amount(pairs):
 
 
 def packs_from_text(text, product):
-    """'3 kg' of a 1 kg pack -> 3 packs; '10 kg' of a 5 kg pack -> 2; '2 kg' of a 5 kg pack -> 1 (rounded up).
-    Returns (packs, was_rounded) or (None, False) if the user didn't give an amount with a unit."""
     up = base_amount(size_pairs(text, spoken=True))
     pp = base_amount(size_pairs(product["name"] + " " + product["size"]))
     if not up or not pp or up[0] != pp[0] or pp[1] <= 0:
@@ -2329,26 +2212,31 @@ LIMIT_EN = "You have reached the limit for this item."
 LIMIT_UR = "اس آئٹم کی حد پوری ہو چکی ہے۔"
 
 
+# the most a customer can add: 10 per item and never above the stock
 def item_cap(p):
-    """Most the customer can buy of one item: 10, and never more than what is in stock."""
     stock = PRODUCTS.get(p["id"], {}).get("stock") if isinstance(p, dict) and "id" in p else None
     if stock is None:
         stock = p.get("stock") if isinstance(p, dict) else None
     return MAX_PER_ITEM if stock is None else max(0, min(MAX_PER_ITEM, int(stock)))
 
 
+# puts the chosen product and quantity in the basket
 def add_selected_to_cart(lang, qty, rounded=False):
-    """Puts current['product'] x qty into the cart, moves on to the next queued item."""
     global current
     p = current["product"]
     existing = next((c for c in current_cart if c["id"] == p["id"]), None)
     cap = item_cap(p)
     have = existing["quantity"] if existing else 0
     limited = False
+    if cap <= 0:
+        msg = t(lang, f"Sorry, {p['name']} is out of stock right now. Please choose another product.",
+                f"معذرت، {p['name']} اس وقت اسٹاک میں نہیں ہے۔ براہِ کرم کوئی اور پروڈکٹ چنیں۔")
+        current = None
+        return compose(msg, start_next(lang), lang)
     if have + qty > cap:
         limited = True
         qty = max(0, cap - have)
-    if limited and qty <= 0:                       # nothing more of this one can be added
+    if limited and qty <= 0:
         msg = t(lang, LIMIT_EN, LIMIT_UR)
         current = None
         return compose(msg, start_next(lang), lang)
@@ -2361,6 +2249,9 @@ def add_selected_to_cart(lang, qty, rounded=False):
     unit, line = money(p["price"], lang), money(p["price"] * qty, lang)
     confirm = t(lang, f"Confirmed: {fmt_qty(qty)} × {p['name']} at {unit} each — {line}.",
                 f"کنفرم: {fmt_qty(qty)} × {p['name']}، {unit} فی عدد — کل {line}۔")
+    if have:
+        confirm += t(lang, f" You now have {fmt_qty(have + qty)} of it in your basket.",
+                     f" اب آپ کی ٹوکری میں اس کی تعداد {fmt_qty(have + qty)} ہو گئی ہے۔")
     if limited:
         confirm += " " + t(lang, LIMIT_EN, LIMIT_UR)
     if rounded:
@@ -2370,8 +2261,6 @@ def add_selected_to_cart(lang, qty, rounded=False):
 
 
 async def contextual_fallback(utt, lang):
-    """When the word rules cannot place a sentence, give Gemini the WHOLE situation (what was asked, what the options
-    are, what is in the cart) and let it choose one action. This covers mistakes nobody wrote a rule for."""
     if gemini_client is None or current is None:
         return None
     fam = current["family"]
@@ -2402,18 +2291,18 @@ async def contextual_fallback(utt, lang):
         out = await _agem(prompt, 120, None, True)
         act = json.loads(re.search(r"\{.*\}", out, re.S).group())
     except Exception as e:
-        print(f"⚠️ contextual fallback failed: {e}")
+        print(f"Warning: contextual fallback failed: {e}")
         return None
-    print(f"🧭 contextual: {act}")
+    print(f"contextual: {act}")
     a = act.get("action")
     if a == "pick_product" and act.get("product_id") in ids:
         p = PRODUCTS[act["product_id"]]
         offered = current.get("variants") or []
         if offered and p not in offered and not _words_point_to(p, current.get("all_variants") or offered, utt.both):
-            print("🛑 that product was not among the offered options and the words do not name it — asking again")
+            print("that product was not among the offered options and the words do not name it — asking again")
             return None
         if not _words_point_to(p, offered, utt.both):
-            print("🛑 the words do not tell the options apart — asking again instead of guessing")
+            print("the words do not tell the options apart — asking again instead of guessing")
             return None
         current["brand"] = p["brand"]
         same = sorted([x for x in current["pool"] if x["brand"] == p["brand"]] or [p], key=lambda x: x["price"])
@@ -2447,7 +2336,6 @@ NOT_THIS = ("نہیں", "نہی", "غلط", "نہیں چاہیے", "nahi", "nahi
 
 
 def switch_product(utt, lang):
-    """While asked 'how many?', the customer says another product ("no, I want chicken mince") -> go back and pick it."""
     bc = brand_change(utt, lang)
     if bc:
         return bc
@@ -2462,7 +2350,7 @@ def switch_product(utt, lang):
     if len(chosen) > 1:
         current["stage"] = "variant"
         return ask_variant(lang, chosen)
-    if said_no and parse_quantity_rules(utt.both) is None and not size_pairs(utt.both, spoken=True):   # "I don't want this one"
+    if said_no and parse_quantity_rules(utt.both) is None and not size_pairs(utt.both, spoken=True):
         current["stage"] = "variant"
         return ask_variant(lang, [v for v in variants if v is not current["product"]] or variants)
     return None
@@ -2481,26 +2369,27 @@ def refuses_item(text: str) -> bool:
     return low in QR_BARE_NO or any(ph in low for ph in QR_REFUSE)
 
 
+# quantity stage: reads the amount and adds the item
 async def handle_quantity(utt, lang):
     p = current["product"]
-    sw = switch_product(utt, lang)                 # "no, I want the chicken mince 1kg" -> go back and pick that one
+    sw = switch_product(utt, lang)
     if sw:
         return sw
-    if refuses_item(utt.both):                     # "I don't want this one" -> drop it and go to the next item
+    if refuses_item(utt.both):
         return skip_current(lang)
-    want = size_pairs(utt.both, spoken=True)           # "I want the two hundred gram one" = a pack size, NOT quantity 2
+    want = size_pairs(utt.both, spoken=True)
     if want and not same_size(want, size_pairs(p["name"] + " " + p["size"])):
         full = current.get("all_variants") or current.get("variants") or []
         other = [v for v in full if v is not p and same_size(want, size_pairs(v["name"] + " " + v["size"]))]
         if len(other) == 1:
             return select_product(lang, other[0])
     r = interpret_reply(utt.both, p, current.get("suggested") or 1.0)
-    if r["kind"] == "keep":                        # "yes" / "next" / "ji" / "wohi": keep the proposed number and go on
+    if r["kind"] == "keep":
         return add_selected_to_cart(lang, r["packs"], False)
     qty, rounded = packs_from_text(utt.both, p)
     if qty is None and r["kind"] == "quantity":
         am = parse_amount(utt.both)
-        if am is not None and am.has_unit:         # "do kilo" / "dedh kilo" is a weight, not 2 packs
+        if am is not None and am.has_unit:
             qty, rounded = r["packs"], r["rounded"]
     if qty is None and not want:
         qty = parse_quantity_rules(utt.both)
@@ -2523,16 +2412,11 @@ def compose(prefix, step, lang):
     return prefix + " " + d, prefix + " " + s
 
 
-# ============================================================
-# CART SUMMARY / CONFIRMATION / ORDER
-# ============================================================
-
 def cart_total():
     return sum(c["unit_price"] * c["quantity"] for c in current_cart)
 
 
 def cart_lines_text(lang, cap=6):
-    """'2 × Dettol Cool Soap 160g, 1 × Guard Rice 1kg' — what the customer chose, read back so they can check it."""
     parts = [f"{fmt_qty(c['quantity'])} × {c['name']}" for c in current_cart]
     s = t(lang, ", ", "، ").join(parts[:cap])
     if len(parts) > cap:
@@ -2564,7 +2448,7 @@ def load_profile(user_id):
         return {"name": c.name or "", "phone": c.phone or "", "address": c.address or "", "city": c.city or "",
                 "lat": c.lat, "lng": c.lng}
     except Exception as e:
-        print(f"⚠️ profile not read: {e}")
+        print(f"Warning: profile not read: {e}")
         return None
     finally:
         db.close()
@@ -2591,11 +2475,12 @@ def save_profile(user_id, data):
         db.commit()
     except Exception as e:
         db.rollback()
-        print(f"⚠️ profile not saved: {e}")
+        print(f"Warning: profile not saved: {e}")
     finally:
         db.close()
 
 
+# reads the whole order back before it is placed
 def request_confirmation(lang):
     global order_pending_confirmation, checkout_ready
     checkout_ready = False
@@ -2613,9 +2498,10 @@ def request_confirmation(lang):
     return m, m
 
 
-CHECKOUT_MODE = os.getenv("CHECKOUT_MODE", "backend").lower()   # "store": website checkout places the order | "backend": this server saves it
+CHECKOUT_MODE = os.getenv("CHECKOUT_MODE", "backend").lower()
 
 
+# saves the order in the database after the final yes
 def confirm_and_place_order(lang):
     global current_cart, order_pending_confirmation, checkout_ready
     if CHECKOUT_MODE == "store":
@@ -2625,13 +2511,13 @@ def confirm_and_place_order(lang):
         m = t(lang, "Great! Opening checkout, please confirm your address and payment.",
               "بہت اچھا! چیک آؤٹ کھول رہا ہوں، براہِ کرم ایڈریس اور ادائیگی کنفرم کریں۔")
         return m, m
-    if ORDER_REQUIRES_LOGIN and not CURRENT_USER:      # browsing and filling the basket is free; ordering needs an account
+    if ORDER_REQUIRES_LOGIN and not CURRENT_USER:
         order_pending_confirmation = False
         LOGIN_PROMPT[CURRENT_SID] = True
         m = t(lang, "Please sign in first to place your order. Your basket is saved — after signing in, just say confirm.",
               "آرڈر دینے کے لیے پہلے سائن اِن کریں۔ آپ کی ٹوکری محفوظ ہے، سائن اِن کے بعد بس کنفرم کہیں۔")
         return m, m
-    learn_from_cart()                              # remember the customer's words for these products
+    learn_from_cart()
     prof = load_profile(CURRENT_USER) or {}
     db = SessionLocal()
     confirmed, unavailable, total = [], [], 0.0
@@ -2657,7 +2543,7 @@ def confirm_and_place_order(lang):
                       address=prof.get("address") or None, city=prof.get("city") or None)
         db.add(order)
         try:
-            db.flush()                              # gives the order its id
+            db.flush()
             oid = getattr(order, "id", None)
             if oid is not None:
                 by_name = {c["name"]: c["id"] for c in current_cart}
@@ -2665,7 +2551,7 @@ def confirm_and_place_order(lang):
                                       quantity=c["quantity"], unit_price=c["unit_price"], line_total=c["line_total"])
                             for c in confirmed])
         except Exception as e:
-            print(f"⚠️ order items not saved: {e}")
+            print(f"Warning: order items not saved: {e}")
     db.commit()
     db.close()
 
@@ -2711,12 +2597,6 @@ def add_families(pairs):
         queue.append(pair)
 
 
-# ============================================================
-# REMEMBERING EVERYTHING SAID IN ONE SENTENCE
-#   "mujhe aik kilo chawal aur 2 kilo cheeni chahiye"  ->  rice (1 kg) + sugar (2 kg), both remembered.
-#   Quantity / pack size / brand said now are used later, so the agent doesn't ask for them again.
-# ============================================================
-
 FILLER = {
     "mujhe", "mujh", "mujhko", "mera", "meri", "mere", "hamein", "humein", "chahiye", "chahye", "chahie", "chaiye",
     "chahiyen", "chahiya", "chahiay", "i", "need", "want", "please", "plz", "give", "me", "us", "get", "kindly", "de",
@@ -2733,13 +2613,11 @@ STRIP_CHARS = " .،,?!؟"
 
 
 def split_clauses(text):
-    """'1 kilo rice and 2 kilo sugar' -> ['1 kilo rice', '2 kilo sugar']"""
     text = (text or "").translate(ARABIC_DIGITS)
     return [c.strip(STRIP_CHARS) for c in SPLIT_RE.split(text) if c and c.strip(STRIP_CHARS)]
 
 
 def has_content(clause):
-    """True when a clause names something (not just 'chahiye' / 'please' / numbers / units)."""
     for tok in tokens(clause):
         if tok in FILLER or tok in NUM_WORDS or tok in UNIT_CANON or tok.isdigit() or len(tok) < 3:
             continue
@@ -2756,13 +2634,12 @@ def piece_pack_size(p):
 
 
 def count_as_pack(clause, pool):
-    """'six eggs' when eggs come in packs of 6 and 12 -> (6.0, [the 6-packs]): the customer named the PACK, not 6 packs."""
     text = (clause or "").translate(ARABIC_DIGITS).lower()
     text = re.sub(r"half\s+(?:a\s+)?dozen|آدھا\s+درجن", "6", text)
     text = re.sub(r"(?:\ba\s+)?\bdozen\b|درجن", "12", text)
     text = spoken_to_digits(text)
     for n_, w1, w2 in re.findall(r"(\d+(?:\.\d+)?)\s+([^\s\d]+)(?:\s+([^\s\d]+))?", text):
-        if any(w.strip(".,،؟?!") in PIECE_WORDS for w in (w1, w2) if w):       # "6 eggs", "6 desi eggs"
+        if any(w.strip(".,،؟?!") in PIECE_WORDS for w in (w1, w2) if w):
             hits = [p for p in pool if piece_pack_size(p) == float(n_)]
             if hits:
                 return float(n_), hits
@@ -2770,8 +2647,6 @@ def count_as_pack(clause, pool):
 
 
 def quantity_text(clause):
-    """The clause if it states an amount ('2 kilo', 'aik', 'three'), else None.
-    'de do' / 'kar do' (= 'please give') is not the number two."""
     c = (clause or "").translate(ARABIC_DIGITS)
     c = re.sub(r"(?<!\w)(?:de|kar|le|دے|کر|لے)\s*(?:do|دو)(?!\w)", " ", c, flags=re.I)
     if re.search(r"\d", c) or any(tok in NUM_WORDS for tok in tokens(c)):
@@ -2784,13 +2659,11 @@ SIZE_WORDS = {"small", "large", "medium", "big", "mini", "chota", "chhota", "bar
 
 
 def item_groups(text, pool):
-    """"aloo tamatar" (no 'and' between) = TWO items: every content word that points at its own products, where
-    no product contains both words, is a separate item. -> [{"text": slice of the sentence, "n": products}] or [] / 1 item."""
     if len(pool) < 3 or not text:
         return []
     skip = set(FILLER) | set(NUM_WORDS) | set(UNIT_CANON) | _UR_STOP | set(_ONES) | set(_TENS) | _SAU | SIZE_WORDS
     ptoks = [_product_tokens(p) for p in pool]
-    found = []                                     # (start, end, frozenset of product indexes)
+    found = []
     for m_ in re.finditer(r"[\w]+", text.translate(ARABIC_DIGITS)):
         w = m_.group().lower()
         if len(w) < 2 or w in skip or w.isdigit():
@@ -2798,7 +2671,6 @@ def item_groups(text, pool):
         hit = frozenset(i for i, ts in enumerate(ptoks) if any(_tok_strength(w, t_) >= 0.8 for t_ in ts))
         if 0 < len(hit) < len(pool):
             found.append((m_.start(), m_.end(), hit))
-    # keep one word per distinct product set; words whose products overlap another word belong to ONE item
     groups = []
     for st, en, hit in found:
         for g in groups:
@@ -2818,7 +2690,6 @@ def item_groups(text, pool):
 
 
 def queue_more_items(pair, groups):
-    """Items 2..n said in one breath ("potato and tomato"): they come next, in the order spoken."""
     extra = SLOTS_EXTRA.setdefault(pair, [])
     new = [{"clause": g["text"], "qty": quantity_text(g["text"])} for g in groups]
     extra[:0] = new
@@ -2826,9 +2697,8 @@ def queue_more_items(pair, groups):
         queue.insert(0, pair)
 
 
+# splits a sentence into the items the customer asked for
 def extract_requests(utt):
-    """Every item in the sentence, in the order spoken: [{"pair": (family, type) | None, "clause", "qty"}].
-    English and Urdu transcripts are read separately (like detect_for_utt) and merged."""
     parsed = []
     for text in (utt.en, utt.ur):
         items = []
@@ -2837,20 +2707,17 @@ def extract_requests(utt):
             if fams:
                 q = quantity_text(clause) if len(fams) == 1 else None
                 if q and len(fams) == 1 and fams[0][0] in BY_FAMILY and count_as_pack(clause, BY_FAMILY[fams[0][0]]):
-                    q = "1"                                    # "six eggs" = ONE pack of 6
+                    q = "1"
                 grp = item_groups(clause, BY_FAMILY[fams[0][0]]) if len(fams) == 1 and fams[0][0] in BY_FAMILY else []
-                if grp:                                    # "aloo tamatar" = two items of the same family
+                if grp:
                     items += [{"pair": fams[0], "clause": g["text"], "qty": quantity_text(g["text"])} for g in grp]
                 else:
                     items += [{"pair": pr, "clause": clause, "qty": q} for pr in fams]
             elif has_content(clause):
-                items.append({"pair": None, "clause": clause, "qty": None})     # something we don't recognise yet
+                items.append({"pair": None, "clause": clause, "qty": None})
         parsed.append(items)
     known = lambda items: sum(1 for i in items if i["pair"])
     en_items, ur_items = parsed
-    # The item list comes from the transcript of the language the user is speaking. The other transcript is often
-    # confident nonsense ("Oil of one sixty gram" for Urdu speech) and used to create items nobody asked for.
-    # It is used only as a fallback when nothing is recognised, and to complete brand / quantity of the SAME item.
     main, other = (ur_items, en_items) if utt.lang == "urdu" else (en_items, ur_items)
     if known(main) == 0 and known(other) > 0:
         main, other = other, main
@@ -2860,23 +2727,22 @@ def extract_requests(utt):
             continue
         hit = next((m for m in merged if m["pair"] == o["pair"]), None)
         if hit:
-            hit["clause"] += " " + o["clause"]       # brand names are often only right in one transcript
+            hit["clause"] += " " + o["clause"]
             hit["qty"] = hit["qty"] or o["qty"]
     return merged
 
 
-_UNKNOWN_CACHE = {}      # (clause, language) -> Gemini's answer
+_UNKNOWN_CACHE = {}
 
 
 async def resolve_unknown(reqs, lang):
-    """Items our word lists don't know (e.g. 'pyaaz') go to the LLM once, all in parallel. -> (reqs, missing names)"""
     unknown = [r for r in reqs if r["pair"] is None]
     if not unknown:
         return reqs, []
     todo = [r for r in unknown if (r["clause"].lower(), lang) not in _UNKNOWN_CACHE]
     fetched = await asyncio.gather(*[_aextract(r["clause"], lang, []) for r in todo])
     for r, ans in zip(todo, fetched):
-        if ans.get("intent") == "add_items":          # only real answers are remembered, never a failed call
+        if ans.get("intent") == "add_items":
             _UNKNOWN_CACHE[(r["clause"].lower(), lang)] = ans
     fresh = {id(r): a for r, a in zip(todo, fetched)}
     parsed = [_UNKNOWN_CACHE.get((r["clause"].lower(), lang)) or fresh[id(r)] for r in unknown]
@@ -2894,15 +2760,15 @@ async def resolve_unknown(reqs, lang):
     return [r for r in reqs if r["pair"]], [m for m in missing if m]
 
 
+# remembers every item of the sentence so they are asked one by one
 def register_requests(reqs):
-    """Queue every new item and remember what was said about it. Returns the items that were newly added."""
     added, seen_now = [], set()
     for r in reqs:
         pair = r["pair"]
         if not pair:
             continue
         if pair in seen_now and pair in queue:
-            queue.append(pair)                         # same family twice in ONE sentence = two different items
+            queue.append(pair)
             SLOTS_EXTRA.setdefault(pair, []).append({"clause": r["clause"], "qty": r["qty"]})
             added.append(r)
             continue
@@ -2910,7 +2776,7 @@ def register_requests(reqs):
         in_current = current and current["family"] == pair[0] and current["ptype"] == pair[1]
         if in_current:
             continue
-        if pair in queue:                              # already waiting: just keep the newest details
+        if pair in queue:
             old = SLOTS.get(pair) or {}
             SLOTS[pair] = {"clause": (old.get("clause", "") + " " + r["clause"]).strip(), "qty": r["qty"] or old.get("qty")}
             continue
@@ -2937,18 +2803,16 @@ def describe_request(r, lang, by_item=False):
     label = pair_label(r["pair"], lang)
     pool = pool_for(*r["pair"]) if (by_item and r["pair"][0] in BY_FAMILY) else []
     near = narrow_products(pool, r["clause"]) if len(pool) > 1 else []
-    if len(near) > 1 and lang == "urdu":               # two apples: say "سیب"
+    if len(near) > 1 and lang == "urdu":
         common = set(_urdu_words(near[0]))
         for q in near[1:]:
             common &= set(_urdu_words(q))
         if common:
             label = sorted(common, key=len)[0]
-    if len(near) == 1:                                 # "tomato" and "potato" are both Vegetables: name the item itself
+    if len(near) == 1:
         label = (" ".join(_urdu_words(near[0])[:1]) or label) if lang == "urdu" else (short_name(near[0]) if len(short_name(near[0])) >= 8 else near[0]["name"])
     return f"{qty_display(r['qty'], lang)} {label}".strip()
 
-
-# ---- change the basket by voice: "sugar hata do" / "make the soap 5" / "cheeni 3 kar do" -------------------------
 
 DELETE_WORDS = ["remove", "delete", "hata", "hatao", "hatado", "hatana", "nikal", "nikaal", "nikalo", "nikaldo",
                 "hata do", "nikal do", "take out", "ہٹا", "ہٹاؤ", "ہٹادو", "ہٹانا", "نکال", "نکالو", "نکالدو",
@@ -2970,7 +2834,6 @@ ORDER_FINISH_RE = re.compile(r"(place|confirm|finish|complete|submit|checkout|ch
 
 
 def wants_finish(text):
-    """'that's all, confirm what I have' — said while an item is still being chosen: stop asking, go to the order."""
     return has_any(text, FINISH_PHRASES) or has_any(text, FINISH_WORDS) or bool(ORDER_FINISH_RE.search(text or ""))
 
 
@@ -2989,7 +2852,6 @@ def _line_is(c, fam, pt):
 
 
 def cart_targets(utt):
-    """Basket lines the sentence points at: by item name, by brand, 'last item' or 'first item'."""
     both, low = utt.both, utt.both.lower()
     if has_any(both, LAST_WORDS) and current_cart:
         return [current_cart[-1]]
@@ -3004,8 +2866,8 @@ def cart_targets(utt):
     return hits
 
 
+# handles remove or change commands for items already in the basket
 def edit_cart(utt, lang):
-    """Remove an item or change its quantity. Returns (display, speech) or None if the sentence isn't an edit."""
     global order_pending_confirmation
     both = utt.both
     wants_delete = has_any(both, DELETE_WORDS)
@@ -3032,7 +2894,7 @@ def edit_cart(utt, lang):
             qty = packs_from_text(text, p0)[0]
         if qty is None:
             qty = parse_quantity_rules(numwords_to_digits(text))
-        if qty is None and current is not None:      # "Dettol kar do" while choosing a brand is an answer, not an edit
+        if qty is None and current is not None:
             return None
     if wants_delete:
         names = t(lang, ", ", "، ").join(c["name"] for c in hits)
@@ -3054,15 +2916,14 @@ def edit_cart(utt, lang):
 
 
 def skip_current(lang):
-    """Drop the item being chosen and carry on with the next one."""
     global current
     label = pair_label((current["family"], current["ptype"]), lang)
     current = None
     return compose(t(lang, f"Okay, skipping {label}.", f"ٹھیک ہے، {label} چھوڑ دیتے ہیں۔"), start_next(lang), lang)
 
 
+# the customer said that is all, so we go to checkout
 def finish_now(lang):
-    """'That's all, confirm what I have' while an item is still being chosen: drop what is pending, read the order."""
     global current
     skipped = ([pair_label((current["family"], current["ptype"]), lang)] if current else []) + [pair_label(pr, lang) for pr in queue]
     current = None
@@ -3076,7 +2937,6 @@ def finish_now(lang):
 
 
 def residual_utterance(utt, pairs):
-    """The sentence without the clauses about the given NEW items (what's left may answer the current question)."""
     def keep(text):
         return " ".join(c for c in split_clauses(text) if not (detect_families(c) and all(f in pairs for f in detect_families(c))))
     en, ur = keep(utt.en), keep(utt.ur)
@@ -3084,10 +2944,6 @@ def residual_utterance(utt, pairs):
         return None
     return Utterance(ur if utt.lang == "urdu" and ur.strip() else (en or ur), utt.lang, en, ur)
 
-
-# ============================================================
-# LLM — only for sentences the fast rules can't handle
-# ============================================================
 
 def build_system_prompt():
     catalog = "\n".join(f'- "{f}"' for f in BY_FAMILY)
@@ -3127,24 +2983,21 @@ def understand_and_extract(user_text: str, language: str, history: list) -> dict
         try:
             return json.loads(out)
         except Exception:
-            # Urdu text can make the model write a bad \u escape: drop stray backslashes and retry
             return json.loads(re.sub(r'\\(?!["\\/bfnrtu])|\\u(?![0-9a-fA-F]{4})', '', out))
     except Exception as e:
-        print(f"⚠️ Gemini parse failed: {e}")
+        print(f"Warning: Gemini parse failed: {e}")
         return {"intent": "chat", "items": [], "reply_text": ""}
 
 
-# ============================================================
-# SPEECH-TO-TEXT
-# ============================================================
-
+# one thing the customer said: the text, the language and both speech results
 @dataclass
 class Utterance:
-    text: str       # transcript in the chosen language (shown to the user)
-    lang: str       # "english" | "urdu"
+    text: str
+    lang: str
     en: str
     ur: str
-    switched: bool = False   # True when the user just asked to change the conversation language
+    switched: bool = False
+    weak: bool = False
 
     @property
     def both(self):
@@ -3166,23 +3019,30 @@ def _top_brands():
     return TOP_BRANDS
 
 
+WORD_CONF = {}
+
+
+# sends the audio to Deepgram for one language
 def _deepgram_call(audio_data: bytes, language_code: str, content_type: str = "audio/webm"):
     try:
         headers = {"Authorization": f"Token {DEEPGRAM_KEY}", "Content-Type": content_type}
         base = f"https://api.deepgram.com/v1/listen?model=nova-3&language={language_code}&punctuate=true"
         url = base
-        if language_code == "en":   # keyterm prompting helps English recognise brand names
+        if language_code == "en":
             url += "".join(f"&keyterm={requests.utils.quote(b)}" for b in _top_brands())
         response = http.post(url, headers=headers, data=audio_data)
         if response.status_code == 400 and url != base:
             response = http.post(base, headers=headers, data=audio_data)
         if response.status_code != 200:
-            print(f"⚠️ Deepgram error ({language_code}): {response.status_code} {response.text[:200]}")
+            print(f"Warning: Deepgram error ({language_code}): {response.status_code} {response.text[:200]}")
             return "", 0.0
         alt = response.json()["results"]["channels"][0]["alternatives"][0]
+        if len(WORD_CONF) > 300:
+            WORD_CONF.clear()
+        WORD_CONF[alt["transcript"]] = [(w.get("punctuated_word") or w.get("word", ""), w.get("confidence", 1.0)) for w in alt.get("words", [])]
         return alt["transcript"], alt.get("confidence", 0.0)
     except Exception as e:
-        print(f"⚠️ Deepgram call failed ({language_code}): {e}")
+        print(f"Warning: Deepgram call failed ({language_code}): {e}")
         return "", 0.0
 
 
@@ -3191,24 +3051,22 @@ SWITCH_CUE = re.compile(r"speak|talk|baat|بات|language|zaban|zuban|زبان|b
 OTHER_LANG = re.compile(r"other language|another language|dusri zaban|doosri zaban|دوسری زبان|دوسرے زبان")
 
 
+# decides if the customer spoke English or Urdu
 def choose_language(en_text, en_conf, ur_text, ur_conf):
-    """Language is asked at the start ("English or Urdu?"). After that it NEVER changes by itself — only when the
-    user asks: 'can you talk to me in Urdu?' / 'can we speak English?' / 'talk in the other language'."""
     both = f"{en_text} {ur_text}".lower()
     wants_en = re.search(r"english|انگلش|انگلیش|انگریزی|angrezi|ingli", both)
     wants_ur = re.search(r"\burdu\b|اردو|اُردو", both)
-    if not language_chosen:                       # this is the answer to "English or Urdu?"
+    if not language_chosen:
         if wants_ur and not wants_en:
             return "urdu"
         if wants_en and not wants_ur:
             return "english"
-        if re.search(r"[\u0600-\u06FF]", ur_text) and ur_conf >= en_conf:   # no word for it: use what they spoke
+        if re.search(r"[\u0600-\u06FF]", ur_text) and ur_conf >= en_conf:
             return "urdu"
         return "english"
     cur = S_language()
     if OTHER_LANG.search(both):
         return "english" if cur == "urdu" else "urdu"
-    # a language word only counts as a switch request when phrased like one (or said alone), never inside an order
     asked = bool(SWITCH_CUE.search(both)) or max(len(tokens(en_text)), len(tokens(ur_text))) <= 3
     if asked and wants_ur and not wants_en:
         return "urdu"
@@ -3221,16 +3079,16 @@ def S_language():
     return session_language or "english"
 
 
+LANG_ASK_RE = re.compile(r"(talk|speak|baat|bol|reply|respond|continue|switch|change|chat|convert).{0,30}(english|urdu|انگلش|اردو|انگریزی|انگلیش|angrezi)|"
+                         r"(english|urdu|angrezi)\s*(mein|me|main)\b|(اردو|انگلش|انگریزی|انگلیش)\s*(میں|مین)\s*(بات|بول|کر|ہی)")
+CHANGE_RE = re.compile(r"\b(actually|instead|rather|never ?mind|change(d)? (of |my )?mind|balki|bajaye|bajay|dar ?asal|asal mein)\b|بجائے|بلکہ|دراصل|اصل میں|رہنے دو|چھوڑو")
 SWITCH_RE = re.compile(r"urdu|english|اردو|انگلش|انگریزی|angrezi")
 
 
+# runs English and Urdu speech recognition at the same time
 async def stt_raw(audio_path: str, content_type: str, cur: str, chosen: bool):
-    """The network part of speech-to-text. Uses NO conversation state, so many customers can be transcribed at once.
-    English + Urdu are transcribed in parallel; if the call for the CURRENT language comes back first and is confident,
-    the slower call is not waited for. -> (en_text, en_conf, ur_text, ur_conf)"""
     with open(audio_path, "rb") as f:
         audio_data = f.read()
-    # the real container decides, not the label the browser put on it (iPhone sends mp4, Chrome sends webm)
     if audio_data[:4] == b"\x1aE\xdf\xa3":
         content_type = "audio/webm"
     elif audio_data[4:8] == b"ftyp":
@@ -3243,8 +3101,6 @@ async def stt_raw(audio_path: str, content_type: str, cur: str, chosen: bool):
     t_ur = asyncio.create_task(asyncio.to_thread(_deepgram_call, audio_data, "ur", content_type))
     first, other = (t_en, t_ur) if cur == "english" else (t_ur, t_en)
     fn, on = ("en", "ur") if first is t_en else ("ur", "en")
-    # Urdu sessions need both transcripts while choosing brands/products (English brand names), so no shortcut there
-    # Urdu brands/products are matched through brand_ur + aliases, so a confident Urdu transcript is enough on its own
     results = {}
     if chosen:
         text, conf = await first
@@ -3257,43 +3113,63 @@ async def stt_raw(audio_path: str, content_type: str, cur: str, chosen: bool):
         results["en"], results["ur"] = await asyncio.gather(t_en, t_ur)
     en_text, en_conf = results.get("en", ("", 0.0))
     ur_text, ur_conf = results.get("ur", ("", 0.0))
-    print(f"🇬🇧 EN ({en_conf:.2f}): {en_text}\n🇵🇰 UR ({ur_conf:.2f}): {ur_text}")
+    print(f"EN ({en_conf:.2f}): {en_text}\nUR ({ur_conf:.2f}): {ur_text}")
     return en_text, en_conf, ur_text, ur_conf
 
 
+WEAK_CONF = 0.55
+WORD_DROP = 0.40
+
+
+# removes the words the speech service was not sure about (background noise)
+def denoise(text):
+    words = WORD_CONF.get(text)
+    if not words or len(words) < 2:
+        return text
+    kept = [w for w, c in words if c >= WORD_DROP]
+    if len(kept) == len(words):
+        return text
+    if len(kept) < max(1, len(words) * 0.35):
+        return ""
+    return " ".join(kept)
+
+
+# cleans the speech result and gets it ready for the logic
 def build_utterance(en_text, en_conf, ur_text, ur_conf) -> Utterance:
-    """Decides the language and builds the Utterance. Uses the conversation state: call it inside use_session()."""
     global session_language
     if not en_text.strip() and not ur_text.strip():
         return Utterance("", session_language or "english", "", "")
-    if language_chosen and max(en_conf, ur_conf) < 0.4:      # mumbling / background noise: don't answer it, keep listening
-        print("🔇 too uncertain — ignored")
+    if language_chosen and max(en_conf, ur_conf) < 0.4:
+        print("too uncertain — ignored")
         return Utterance("", session_language or "english", "", "")
     best_conf = max(en_conf, ur_conf)
     main_ = ur_text if ur_conf >= en_conf else en_text
     words_ = tokens(main_)
     if language_chosen and best_conf < 0.6 and len(words_) >= 3 and len(set(words_)) <= len(words_) * 0.6:
-        print("🔇 repeated filler words (echo / noise) — ignored")       # "اس بعد بعد اس بعد کے کے" -> no Gemini call, no reply
+        print("repeated filler words (echo / noise) — ignored")
         return Utterance("", session_language or "english", "", "")
+    weak = False
+    if language_chosen:
+        en_text, ur_text = denoise(en_text), denoise(ur_text)
+        if not (en_text + ur_text).strip():
+            print("only background words — ignored")
+            return Utterance("", session_language or "english", "", "")
+        weak = best_conf < WEAK_CONF
     prev = session_language or "english"
     lang = choose_language(en_text, en_conf, ur_text, ur_conf)
     session_language = lang
     main = ur_text if lang == "urdu" else en_text
-    if not main.strip():           # e.g. Urdu words spoken in an English session: still understand them (reply stays English)
+    if not main.strip():
         main = en_text or ur_text
-    return Utterance(main, lang, en_text, ur_text, switched=(lang != prev))
+    return Utterance(main, lang, en_text, ur_text, switched=(lang != prev), weak=weak)
 
 
 async def transcribe_with_deepgram(audio_path: str, content_type: str = "audio/webm") -> Utterance:
-    """Single-customer version (kept for tests / scripts)."""
     raw = await stt_raw(audio_path, content_type, S_language(), language_chosen)
     return build_utterance(*raw)
 
 
-# ============================================================
-# TEXT-TO-SPEECH
-# ============================================================
-
+# makes the reply audio (Uplift for Urdu, Edge as backup)
 async def speak(text: str, language: str, output_path: str) -> bool:
     if language == "urdu":
         def _uplift_call():
@@ -3307,37 +3183,34 @@ async def speak(text: str, language: str, output_path: str) -> bool:
             with open(output_path, "wb") as f:
                 f.write(response.content)
             return True
-        print(f"⚠️ Uplift TTS failed: {response.status_code} {response.text[:200]}")
+        print(f"Warning: Uplift TTS failed: {response.status_code} {response.text[:200]}")
         return False
     for attempt in range(2):
         try:
             await edge_tts.Communicate(text, "en-US-AriaNeural").save(output_path)
             return True
         except Exception as e:
-            print(f"⚠️ edge-tts attempt {attempt + 1} failed: {e}")
+            print(f"Warning: edge-tts attempt {attempt + 1} failed: {e}")
             await asyncio.sleep(0.2)
     return False
 
 
-TTS_JOBS = {}      # id -> {"text", "lang", "ts"}
-TTS_CACHE = {}     # (lang, text) -> mp3 bytes  (repeated phrases are instant)
+TTS_JOBS = {}
+# repeated sentences are kept here so their audio is instant
+TTS_CACHE = {}
 
 
 class TTSJob:
-    """One spoken reply. Synthesis starts the moment the reply is decided (not when the browser asks for it),
-    and the browser can start playing while the rest is still being produced."""
     def __init__(self, text, lang):
         self.text, self.lang, self.ts = text, lang, time.time()
         self.chunks, self.done = [], False
 
 
 def clean_for_tts(text: str) -> str:
-    """edge-tts answers 'No audio was received' for text it can not read (dashes, Arabic semicolons, emoji, markdown ...).
-    Turn those into plain pauses so the voice always gets something it can speak."""
-    t_ = re.sub(r"[\u2014\u2013\u2012\u2015]", ", ", text or "")              # em / en dashes
+    t_ = re.sub(r"[\u2014\u2013\u2012\u2015]", ", ", text or "")
     t_ = t_.replace("؛", "،").replace(";", ",").replace("۔", ".").replace("؟", "?")
     t_ = re.sub(r"[*_#`~|<>{}\[\]\\^]", " ", t_)
-    t_ = re.sub(r"[\U0001F000-\U0001FFFF\u2600-\u27BF\uFE0F]", " ", t_)           # emoji
+    t_ = re.sub(r"[\U0001F000-\U0001FFFF\u2600-\u27BF\uFE0F]", " ", t_)
     t_ = t_.replace("&", " and ").replace("₨", "Rs ")
     return re.sub(r"\s+", " ", t_).strip()
 
@@ -3351,10 +3224,8 @@ async def _edge_collect(text: str, voice: str):
 
 
 async def _edge_urdu(text: str):
-    """Free Urdu voice with fallbacks: cleaned text, the other Urdu voice, and in the end the English voice (so the
-    customer still hears the answer instead of silence)."""
     cleaned = clean_for_tts(text)
-    for voice, txt in (("ur-PK-UzmaNeural", cleaned), ("en-US-AriaNeural", cleaned)):      # one Urdu try (a second Urdu voice fails the same way)
+    for voice, txt in (("ur-PK-UzmaNeural", cleaned), ("en-US-AriaNeural", cleaned)):
         if not txt:
             break
         try:
@@ -3362,7 +3233,7 @@ async def _edge_urdu(text: str):
             if chunks:
                 return chunks
         except Exception as e:
-            print(f"⚠️ edge-tts {voice} failed: {e}")
+            print(f"Warning: edge-tts {voice} failed: {e}")
     return []
 
 
@@ -3376,7 +3247,7 @@ async def _run_tts(job):
             data = await _urdu_tts_bytes(job.text)
             if data:
                 job.chunks.append(data)
-            else:                                   # Uplift failed / out of balance -> free Urdu neural voice
+            else:
                 job.chunks.extend(await _edge_urdu(job.text))
         else:
             for attempt in range(2):
@@ -3384,13 +3255,13 @@ async def _run_tts(job):
                     job.chunks.extend(await _edge_collect(clean_for_tts(job.text) or job.text, "en-US-AriaNeural"))
                     break
                 except Exception as e:
-                    print(f"⚠️ edge-tts attempt {attempt + 1} failed: {e}")
-                    if job.chunks:            # already partly produced: keep what we have
+                    print(f"Warning: edge-tts attempt {attempt + 1} failed: {e}")
+                    if job.chunks:
                         break
         if job.chunks:
             _cache_put(key, b"".join(job.chunks))
     except Exception as e:
-        print(f"⚠️ TTS job failed: {e}")
+        print(f"Warning: TTS job failed: {e}")
     finally:
         job.done = True
 
@@ -3408,7 +3279,6 @@ _GENERIC_UR = {}
 
 
 def _generic_ur(family):
-    """Urdu words that name the WHOLE family ("سبزی", "کولڈ ڈرنک", "چائے") — shared by many of its products."""
     if family not in _GENERIC_UR:
         items = BY_FAMILY.get(family, [])
         count = {}
@@ -3421,7 +3291,6 @@ def _generic_ur(family):
 
 
 def _urdu_words(p):
-    """The specific Urdu name of a product from the aliases column ("ٹماٹر", "آلو", "سیب کالا کلو")."""
     bu = p.get("brand_ur") or ""
     gen = _generic_ur(p["family"])
     out = []
@@ -3439,16 +3308,15 @@ def _urdu_words(p):
 
 
 def _urdu_item_name(p):
-    """Spoken Urdu name of a product: brand + Urdu item word (from the aliases column) + size."""
     bu = p.get("brand_ur") or ""
     words = _urdu_words(p)
     own = [a for a in words if bu and bu in a]
-    if own:                                   # the alias already contains the brand ("ڈالڈا کوکنگ آئل")
+    if own:
         base = min(own, key=lambda a: abs(len(a.split()) - 3))
     elif words:
         brand = bu if p.get("brand") != "Generic" else ""
         base = f"{brand} {' '.join(words[:2])}".strip()
-    else:                                     # no specific word: "نیسکیفے کافی" (brand + what it is)
+    else:
         alias_own = [a.strip() for a in re.split(r"[;,،]", p.get("aliases", ""))
                      if bu and bu in a and a.strip() != bu and not re.search(r"[\d a-zA-Z]", a.replace(" ", "")) and a.strip() != bu]
         if alias_own:
@@ -3461,7 +3329,6 @@ def _urdu_item_name(p):
 
 
 def urduize(text):
-    """The Urdu voice can't pronounce English product names — say them in Urdu (the screen text stays English)."""
     rep_ = {}
     for p in PRODUCTS.values():
         ur = _urdu_item_name(p)
@@ -3482,13 +3349,11 @@ STORE_NAME_RE = re.compile(r"\bAa?s+aa?n[\s\-]*Mart\b", re.I)
 
 
 def pronounce_brand(text, lang):
-    """The English voice reads "AssanMart" wrongly, so it gets a phonetic spelling. Spoken text only: the words on screen stay as they are."""
     return STORE_NAME_RE.sub("آسان مارٹ" if lang == "urdu" else "Ahsahn Mart", text)
 
 
 def tts_url(text: str, lang: str) -> str:
-    """Returns immediately and starts synthesising in the background; the browser streams it from /tts/<id>."""
-    text = pronounce_brand(text, lang)            # only the SPOKEN text: "AssanMart" -> "Aasaan Mart" / آسان مارٹ
+    text = pronounce_brand(text, lang)
     if lang == "urdu":
         text = urduize(text)
     tid = uuid.uuid4().hex
@@ -3506,9 +3371,11 @@ def _cache_put(key, data: bytes):
         TTS_CACHE.pop(next(iter(TTS_CACHE)))
 
 
-UPLIFT_OFF_UNTIL = 1e18 if os.getenv("UPLIFT_DISABLED") == "1" else 0.0     # after a 401/402/403 (no balance / bad key) we skip Uplift for a while instead of failing every turn
+# if Uplift has no balance or a wrong key we skip it for a while
+UPLIFT_OFF_UNTIL = 1e18 if os.getenv("UPLIFT_DISABLED") == "1" else 0.0
 
 
+# gets Urdu audio from Uplift, if it fails Edge voice is used
 async def _urdu_tts_bytes(text: str):
     global UPLIFT_OFF_UNTIL
     if time.time() < UPLIFT_OFF_UNTIL:
@@ -3522,14 +3389,14 @@ async def _urdu_tts_bytes(text: str):
     try:
         r = await asyncio.to_thread(_call)
     except Exception as e:
-        print(f"⚠️ Uplift TTS error: {e}")
+        print(f"Warning: Uplift TTS error: {e}")
         return None
     if r.status_code == 200:
         return r.content
-    print(f"⚠️ Uplift TTS failed: {r.status_code} {r.text[:200]}")
+    print(f"Warning: Uplift TTS failed: {r.status_code} {r.text[:200]}")
     if r.status_code in (401, 402, 403):
         UPLIFT_OFF_UNTIL = time.time() + 600
-        print("ℹ️ Uplift disabled for 10 minutes — using the free edge-tts Urdu voice instead")
+        print("Note: Uplift disabled for 10 minutes — using the free edge-tts Urdu voice instead")
     return None
 
 
@@ -3539,18 +3406,18 @@ def _is_apple_safari(ua: str) -> bool:
             or ("safari" in ua and "chrome" not in ua and "chromium" not in ua and "android" not in ua))
 
 
+# sends the audio file to the browser (also works on iPhone Safari)
 @app.get("/tts/{tid}")
 async def tts_stream(tid: str, request: Request):
     job = TTS_JOBS.get(tid)
     if not job:
         return Response(status_code=404)
-    while not job.chunks and not job.done:          # wait for the first bit of audio
+    while not job.chunks and not job.done:
         await asyncio.sleep(0.01)
     if not job.chunks:
         return Response(status_code=502)
 
     if _is_apple_safari(request.headers.get("user-agent", "")):
-        # iPhone/Safari will not play a chunked stream: it needs the full file with a Content-Length and Range (206) support
         waited = 0.0
         while not job.done and waited < 30:
             await asyncio.sleep(0.02)
@@ -3564,7 +3431,7 @@ async def tts_stream(tid: str, request: Request):
             if m.group(1):
                 start = int(m.group(1))
                 end = int(m.group(2)) if m.group(2) else size - 1
-            else:                                   # "bytes=-N" = the last N bytes
+            else:
                 start = max(0, size - int(m.group(2)))
                 end = size - 1
             end = min(end, size - 1)
@@ -3598,14 +3465,9 @@ def cleanup_old_audio(max_age=900):
             pass
 
 
-# ============================================================
-# ROUTES — voice conversation
-# ============================================================
-
+# first message of the voice window
 @app.post("/greet")
 async def greet(request: Request):
-    """?lang=english|urdu : the language is already known (chosen by the welcome agent) -> skip the language question.
-    ?resume=1 : keep the cart and the conversation (coming back to the voice window), just say we are listening."""
     global session_language, language_chosen
     sid, user = await identify(request)
     cleanup_old_audio()
@@ -3640,8 +3502,6 @@ async def greet(request: Request):
 
 @app.post("/voice/preload")
 async def voice_preload(payload: dict, request: Request):
-    """The photo scanner hands over what is still open: {lang, cart:[{id, qty}], lines:["sugar 2kg", ...]}.
-    The confirmed items go into this customer's voice cart; the agent then asks about the remaining lines by voice."""
     global session_language, language_chosen
     sid, user = await identify(request)
     lang = "urdu" if payload.get("lang") == "urdu" else "english"
@@ -3678,8 +3538,6 @@ async def voice_preload(payload: dict, request: Request):
                 "cart": cart_snapshot(), "history": history, "language": lang}
 
 
-# ---- photo scanner: the agent speaks every step and understands short answers ------------------------------
-
 _ORD = {0: r"\b(1|one|first|ek|aik|pehla|pehli)\b|ایک|پہلا|پہلی|اول", 1: r"\b(2|two|second|do|dusra)\b|دو\b|دوسرا|دوسری",
         2: r"\b(3|three|third|teen|tisra)\b|تین|تیسرا|تیسری", 3: r"\b(4|four|fourth|char|chaar|chotha)\b|چار|چوتھا|چوتھی",
         4: r"\b(5|five|fifth|panch|paanch)\b|پانچ|پانچواں", 5: r"\b(6|six|sixth|chhe|che)\b|چھ\b|چھٹا",
@@ -3698,8 +3556,6 @@ _S_NEXT_BROWSE = re.compile(r"brows|continue shopping|keep shopping|look around|
 
 
 def scan_pick_by_name(options, text):
-    """Which of the shown options did the customer NAME? Words that tell the options apart (rare words, brand, type) and the
-    size said ("5 litre", "ایک کلو") are compared with every option. -> ("pick", index) | ("ambiguous", [indices]) | None."""
     prods = [PRODUCTS.get(o.get("id")) for o in options]
     if len(prods) < 2 or not all(prods):
         return None
@@ -3724,7 +3580,7 @@ def scan_pick_by_name(options, text):
 def scan_intent(context, text, options):
     s = text.lower()
     toks = set(tokens(s))
-    if context == "qty":                                   # "how many?" / "you wrote 2 kg — keep it?"
+    if context == "qty":
         n = parse_quantity_rules(numwords_to_digits(s))
         if _S_BACK.search(s):
             return {"action": "back"}
@@ -3735,7 +3591,7 @@ def scan_intent(context, text, options):
         if _S_NO.search(s) or _S_REVIEW.search(s):
             return {"action": "no"}
         return {"action": None}
-    if context == "next":                                  # after the items were added: checkout / browse / add more
+    if context == "next":
         if _S_NEXT_CHECKOUT.search(s):
             return {"action": "checkout"}
         if _S_NEXT_MORE.search(s):
@@ -3753,12 +3609,12 @@ def scan_intent(context, text, options):
         ordinal = [i for i, pat in _ORD.items() if i < len(options) and re.search(pat, s)]
         said_number = re.search(r"\b(number|option|no\.?)\b|نمبر|آپشن", s)
         by_name = scan_pick_by_name(options, text)
-        if by_name and not said_number:                    # "Dalda 5 litre", "سفید لوبیا", "the Sella one": by name (and size)
+        if by_name and not said_number:
             if by_name[0] == "pick":
                 return {"action": "pick", "index": by_name[1]}
             if not ordinal:
                 return {"action": "ambiguous", "indices": by_name[1]}
-        if ordinal:                                         # "the second one" matches "one" too -> the highest ordinal wins
+        if ordinal:
             return {"action": "pick", "index": max(ordinal)}
         if by_name and by_name[0] == "ambiguous":
             return {"action": "ambiguous", "indices": by_name[1]}
@@ -3812,8 +3668,6 @@ async def scan_reply(audio: UploadFile = File(...), context: str = Form("pick"),
     return {"heard": heard, **scan_intent(context, both, options)}
 
 
-# ---- sign-up form by voice: the agent asks name -> phone -> address, the form fills itself ------------------
-
 _DIGIT_WORDS = {
     "0": ["zero", "oh", "o", "sifar", "sifr", "صفر", "سفر", "زیرو", "زیر", "اوہ"],
     "1": ["one", "ek", "aik", "ایک", "ون", "وان"],
@@ -3833,7 +3687,6 @@ _SEG_WORDS = sorted([w for w in _DW if len(w) > 1], key=len, reverse=True)
 
 
 def _seg_digits(word):
-    """'تھریتری' -> '33', 'سکسون' -> '61' (digit words the speech engine glued together). None if it is not only digit words."""
     n = len(word)
     best = [None] * (n + 1)
     best[0] = ""
@@ -3847,8 +3700,6 @@ def _seg_digits(word):
 
 
 def spoken_phone(text):
-    """'zero three double three' / 'زیرو ڈبل تھری سکس47 ٹرپل فور سکس ون' / '0336 47' -> '03364744461' (or what could be understood).
-    Understands double / triple (ڈبل / ٹرپل), digit words in English, Urdu and Roman Urdu, glued words (تھریتری = 33) and mixed tokens (سکس47)."""
     toks = re.findall(r"\d+|[^\W\d_]+", (text or "").translate(ARABIC_DIGITS).lower())
     out, mult = [], 1
     for idx, w in enumerate(toks):
@@ -3860,7 +3711,7 @@ def spoken_phone(text):
             mult = 1
             continue
         d = _DW.get(w)
-        if d is None and w == "و" and out and idx == len(toks) - 1:   # speech engines often cut the last "ون" to "و"
+        if d is None and w == "و" and out and idx == len(toks) - 1:
             d = "1"
         if d is None:
             d = _seg_digits(w)
@@ -3879,6 +3730,7 @@ _NAME_LEAD = re.compile(r"^(?:my name is|my name's|i am|i'm|this is|name is|mera
 _ADDR_LEAD = re.compile(r"^(?:my address is|address is|it is|it's|mera pata|میرا پتہ|میرا ایڈریس|پتہ|ایڈریس)\s+", re.I)
 
 
+# voice answers inside the checkout form (address, yes or no)
 @app.post("/form/reply")
 async def form_reply(audio: UploadFile = File(...), field: str = Form("name"), lang: str = Form("english")):
     ct = (audio.content_type or "audio/webm").split(";")[0]
@@ -3897,7 +3749,7 @@ async def form_reply(audio: UploadFile = File(...), field: str = Form("name"), l
             d = spoken_phone(cand)
             if len(d) == 11 and d.startswith("03"):
                 return {"heard": main, "value": d, "ok": True}
-        best = max((spoken_phone(c) for c in (en_text, ur_text, main)), key=len)     # keep the fullest attempt, the form shows what was heard
+        best = max((spoken_phone(c) for c in (en_text, ur_text, main)), key=len)
         return {"heard": main, "value": best, "ok": False}
     if field == "name":
         v = _NAME_LEAD.sub("", main.strip()).strip(" .،۔")
@@ -3905,14 +3757,12 @@ async def form_reply(audio: UploadFile = File(...), field: str = Form("name"), l
     if field == "address":
         v = _ADDR_LEAD.sub("", main.strip()).strip(" .،۔")
         return {"heard": main, "value": v, "ok": len(v) >= 4}
-    intent = scan_intent("summary", f"{en_text} {ur_text}", [])     # yes / no (and "change name / phone / address")
+    intent = scan_intent("summary", f"{en_text} {ur_text}", [])
     low = f"{en_text} {ur_text}".lower()
     which = ("name" if re.search(r"name|نام", low) else "phone" if re.search(r"phone|number|نمبر|فون", low)
              else "address" if re.search(r"address|پتہ|ایڈریس", low) else None)
     return {"heard": main, "action": intent.get("action"), "which": which, "ok": True}
 
-
-# ---- welcome agent: language -> voice or browse -> (after an order) what next --------------------------------
 
 WELCOME_SAY = {
     "language": ("Assalam-o-Alaikum! Welcome to AssanMart. I'm your voice assistant. Which language would you like to talk in, English or Urdu?",
@@ -3957,7 +3807,6 @@ def welcome_intent(stage, text):
 
 @app.post("/welcome/say")
 async def welcome_say(payload: dict):
-    """What the welcome agent says at a given stage: language | mode | after_order (the language is known after the first)."""
     stage = payload.get("stage") or "language"
     lang = "urdu" if payload.get("lang") == "urdu" else "english"
     cleanup_old_audio()
@@ -3968,9 +3817,9 @@ async def welcome_say(payload: dict):
     return {"text": txt, "audio_url": tts_url(txt, lang), "lang": lang, "stage": stage}
 
 
+# voice assistant on the welcome screen
 @app.post("/welcome/reply")
 async def welcome_reply(audio: UploadFile = File(...), stage: str = Form("language"), lang: str = Form("english")):
-    """Listens to the customer's answer at the welcome stage (no cart / order state involved)."""
     ct = (audio.content_type or "audio/webm").split(";")[0]
     ext = "mp4" if "mp4" in ct else "webm"
     path = f"temp_audio/{uuid.uuid4()}.{ext}"
@@ -4016,7 +3865,6 @@ def join_names(names, lang):
 
 
 def current_question(lang):
-    """Asks the pending question of the current item again (used after a language switch or an interruption)."""
     st, fam = current["stage"], current["family"]
     if st == "brand":
         return ask_brand(lang, current["brand_page"])
@@ -4030,7 +3878,6 @@ def current_question(lang):
 
 
 def looks_like_answer(utt):
-    """True when the sentence answers the question currently being asked (brand / type / product / quantity)."""
     st, both, fam = current["stage"], utt.both, current["family"]
     if st == "brand":
         return bool(match_brand_rules(both, current["brands"])) or wants_more(both)
@@ -4045,8 +3892,6 @@ def looks_like_answer(utt):
 
 
 def find_unavailable(text):
-    """Brands the customer asked for that exist in the dataset but are switched off (no price / out of stock).
-    -> [(brand, family)] so the agent can say so instead of silently offering something else."""
     if not _HIDDEN:
         return []
     low = text.lower()
@@ -4055,7 +3900,7 @@ def find_unavailable(text):
     for h in _HIDDEN:
         b = h["brand"]
         if not b or b == "Generic" or b.lower() in BRAND_FAMS or b in seen:
-            continue                                   # other products of this brand ARE on sale -> normal flow
+            continue
         key = re.sub(r"[\s\-'’.]+", "", b.lower())
         hit = len(key) >= 3 and any(key in c for c in comp)
         if not hit and h["brand_ur"]:
@@ -4066,29 +3911,22 @@ def find_unavailable(text):
     return out
 
 
-
-# ---- "I don't want X, I want Y" / words glued together by the speech recogniser ---------------------------
-
 NEG_PATTERNS = [
-    # Urdu: "نہیں مجھے سفید لوبیا نہیں چاہیے"
     re.compile(r"(?<!\S)(?:(?:نہیں|نہی|جی نہیں)\s+)?(?:مجھے\s+)?((?:(?!چاہیے|چاہئے|چاہیئے|لینا|نہیں)[^\s،۔,.؟?]+\s+){0,3}?(?!چاہیے|چاہئے|چاہیئے|لینا|نہیں)[^\s،۔,.؟?]+)\s+(?:نہیں|نہی)\s+(?:چاہیے|چاہئے|چاہیئے|لینا|لینی|چاہتا|چاہتی)", re.I),
-    # English: "no, I don't want the white beans" / "I do not need white beans"
     re.compile(r"(?:\bno\b[, ]*)?(?:\bi\s+)?\b(?:don'?t|do\s+not|dont|did\s+not|didn'?t)\s+(?:want|need|ask\s+for|order)\s+(?:the\s+|any\s+|that\s+)?(.+?)(?=\s+(?:i|and|but|give|get|add)\b|[,.;]|$)", re.I),
-    # Roman Urdu: "mujhe safed lobia nahi chahiye"
     re.compile(r"(?:\bnahi\b[, ]*)?(?:\bmujhe\s+)?\b([a-z' ]*?)\s*\b(?:nahi|nahin|nai)\s+(?:chahiye|chahie|lena|leni)\b", re.I),
 ]
 
 
+# removes the items the customer said no to (for example 'not rice')
 def strip_negated(utt):
-    """Cuts the parts the customer REJECTS out of the sentence ("not the white beans, the red ones") so they are not
-    ordered. Returns (cleaned Utterance, [rejected phrases])."""
     dropped = []
 
     def cut(text):
         for pat in NEG_PATTERNS:
             def sub(m):
                 if not m.group(1).strip():
-                    return m.group(0)                 # a bare "نہیں چاہیے" is handled elsewhere (skip / not this)
+                    return m.group(0)
                 dropped.append(m.group(1).strip())
                 return " "
             text = pat.sub(sub, text)
@@ -4106,7 +3944,6 @@ def _product_blob(p):
 
 
 def drop_from_cart(phrases):
-    """Removes the cart lines the customer just rejected. A line goes when what he named is one of its names / aliases."""
     global order_pending_confirmation
     gone = []
     for ph in phrases:
@@ -4129,8 +3966,6 @@ _KNOWN_WORDS = set()
 
 
 def repair_fused_words(text):
-    """Speech-to-text sometimes glues a filler to a product word ("مجلال" = "مجھے لال"). A word that is not known,
-    but ENDS with a word of the dataset, is split in two."""
     global _KNOWN_WORDS
     if not _KNOWN_WORDS:
         for p in PRODUCTS.values():
@@ -4149,6 +3984,7 @@ def repair_fused_words(text):
     return " ".join(out)
 
 
+# detects JazzCash, Easypaisa or card (only cash on delivery is supported)
 PAYMENT_RE = re.compile(
     r"jazz\s*cash|jazzcash|easy\s*paisa|easypaisa|easy\s*paise|nayapay|naya\s*pay|sadapay|sada\s*pay|raast|bank\s*(transfer|account|card)|"
     r"credit\s*card|debit\s*card|master\s*card|mastercard|\bvisa\b|\bcard\b|card\s*number|online\s*(payment|pay|transfer)|pay\s*(online|by\s*card|with\s*card)|"
@@ -4163,28 +3999,25 @@ _LETTER_UNITS = [(re.compile(r"(?<![\u0600-\u06FF])ایم\s*ایل(?![\u0600-\u0
 
 
 def norm_letter_units(text):
-    """Units that speech-to-text spells letter by letter in Urdu script: "250 ایم ایل" -> "250 ml", "2 کے جی" -> "2 kg"."""
     for rx, rep in _LETTER_UNITS:
         text = rx.sub(rep, text or "")
     return text
 
 
+# main brain: decides what to do with what the customer said
 async def route_utterance(utt: Utterance, history: list, lang: str):
-    """Decides what to say. Returns (display_text, speech_text)."""
     global order_pending_confirmation, current, language_chosen
     utt.ur, utt.en = norm_letter_units(utt.ur), norm_letter_units(utt.en)
     both = utt.both
+    weak = bool(getattr(utt, "weak", False))
 
-    # -1. the agent has just asked "English or Urdu?" -> this is the answer
     if not language_chosen:
         language_chosen = True
         utt.switched = False
         if SWITCH_RE.search(both.lower()) and not detect_for_utt(utt) and max(len(tokens(utt.en)), len(tokens(utt.ur))) <= 6:
             m = t(lang, "Okay, English it is. What groceries do you need?", "جی ٹھیک ہے، اردو میں بات کرتے ہیں۔ آپ کو کیا چاہیے؟")
             return m, m
-        # (otherwise the user already started ordering: language was picked from what they spoke, carry on)
 
-    # -0.5 other ways of paying (JazzCash, Easypaisa, card ...): only Cash on Delivery exists. Never take card numbers.
     if PAYMENT_RE.search(both):
         if order_pending_confirmation:
             tail = t(lang, " Say yes to confirm your order with cash on delivery, or no to cancel.",
@@ -4197,7 +4030,21 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
               "براہِ کرم کوئی کارڈ یا اکاؤنٹ نمبر نہ بولیں۔" + tail)
         return m, m
 
-    # 0. the user just asked to change language -> confirm in the NEW language and carry on
+    low_ = both.lower()
+    if LANG_ASK_RE.search(low_) and len(tokens(both)) <= 10 and not re.search(r"\d", both):
+        to_ur = bool(re.search(r"urdu|اردو", low_)) and not re.search(r"english|انگلش|انگریزی|انگلیش|angrezi", low_)
+        to_en = bool(re.search(r"english|انگلش|انگریزی|انگلیش|angrezi", low_)) and not re.search(r"urdu|اردو", low_)
+        if to_ur or to_en:
+            global session_language
+            session_language = "urdu" if to_ur else "english"
+            lang = session_language
+            msg = t(lang, "Sure, I'll speak English from now on. ", "جی ضرور، اب میں آپ سے اردو میں بات کروں گی۔ ")
+            if current is not None:
+                d, s_ = current_question(lang)
+                return msg + d, msg + s_
+            m = msg + t(lang, "What would you like?", "آپ کو کیا چاہیے؟")
+            return m, m
+
     if utt.switched and not detect_for_utt(utt):
         msg = t(lang, "Sure, I'll speak English from now on. ", "جی ضرور، اب میں آپ سے اردو میں بات کروں گی۔ ")
         if current is not None:
@@ -4206,12 +4053,9 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
         m = msg + t(lang, "What would you like?", "آپ کو کیا چاہیے؟")
         return m, m
 
-    # 0-finish. "now confirm my order" / "place my order" while an item is still being chosen: always go to the order.
-    # (Must come before everything that looks at product words: "NOW" is also a chocolate brand.)
     if not order_pending_confirmation and (current is not None or queue) and wants_finish(both) and not has_any(both, NO):
         return finish_now(lang)
 
-    # 0a. the customer asks for a brand that is in the dataset but not for sale right now -> say so honestly
     gone = find_unavailable(both)
     if gone and not order_pending_confirmation:
         names = "، ".join(b for b, _ in gone) if lang == "urdu" else ", ".join(b for b, _ in gone)
@@ -4226,12 +4070,10 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
             return sorry + d, sorry + s_
         return sorry.strip(), sorry.strip()
 
-    # 0b. change the basket by voice (remove an item / change its quantity) — works at any point before checkout
     edited = edit_cart(utt, lang)
     if edited:
         return edited
 
-    # 1. waiting for the final yes/no
     if order_pending_confirmation:
         if has_any(both, CANCEL):
             return cancel_everything(lang)
@@ -4243,12 +4085,10 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
                   "ٹھیک ہے، ابھی کنفرم نہیں کیا۔ کیا شامل یا تبدیل کرنا ہے؟")
             return m, m
 
-    # 2. in the middle of brand -> pack -> quantity for an item
     if current is not None:
         if has_any(both, CANCEL):
             return cancel_everything(lang)
         stage = current["stage"]
-        # a way out, so the agent can never get stuck on one item
         if wants_finish(both):
             return finish_now(lang)
         if wants_skip(both):
@@ -4259,26 +4099,35 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
             drop_from_cart(rejected)
             if not (utt.en.strip() or utt.ur.strip()):
                 return current_question(lang)
-        # NEW item(s) mentioned while another is being chosen ("...and 2 kilo sugar too") -> remember them, with details.
-        # Only the language the user speaks counts here, and a word of the item being chosen is never a "new item".
         cur_pair = (current["family"], current["ptype"])
         main_only = Utterance(utt.text, utt.lang, "" if utt.lang == "urdu" else utt.text, utt.text if utt.lang == "urdu" else "")
         reqs = [r for r in extract_requests(main_only) if r["pair"]
                 and not (r["pair"][0] == cur_pair[0] and (r["pair"][1] is None or cur_pair[1] is None or r["pair"][1] == cur_pair[1]))]
-        # words that belong to the products being chosen right now ("red kidney beans" while choosing a pulse) are the ANSWER,
-        # never a second item ("Carrot Red", "Fresh Beans")
         pool_words = set()
         for p_ in (current.get("all_variants") or current.get("variants") or current.get("pool") or []):
             pool_words |= set(tokens(_product_blob(p_)))
         def _is_answer_words(r):
             ws = [w for w in tokens(r.get("clause") or "") if len(w) >= 3]
             if bool(ws) and sum((w in pool_words) or any(_tok_strength(w, t_) >= 0.8 for t_ in pool_words) for w in ws) >= len(ws) * 0.5:
-                return True                              # (Urdu-script spellings of the product's words count too)
-            # "Zero SUGAR can" while choosing a cola: the family word is part of the product's name, no amount was said
+                return True
             fam_ws = [w for w in tokens(r["pair"][0]) if len(w) >= 3]
             return bool(fam_ws) and all(w.rstrip("s") in {x.rstrip("s") for x in pool_words} for w in fam_ws) and not r.get("qty")
         reqs = [r for r in reqs if not _is_answer_words(r)]
-        # "full cream milk 250 ml" (any spelling) while the packs 250 ml / 1000 ml are on offer = the answer, not a new item
+        if weak:
+            reqs = []
+        if reqs and CHANGE_RE.search(both.lower()) and not re.search(r"\b(also|too|plus|aur|bhi)\b|بھی", both.lower()):
+            old_label = pair_label((current["family"], current["ptype"]), lang)
+            current = None
+            added = register_requests(reqs)
+            for r_ in reversed(added):
+                if r_["pair"] in queue:
+                    queue.remove(r_["pair"]); queue.insert(0, r_["pair"])
+            names = join_names([describe_request(r, lang, by_item=False) for r in (added or reqs)], lang)
+            pre = t(lang, f"Okay, {names} instead of {old_label}. ", f"ٹھیک ہے، {old_label} کی جگہ {names}۔ ")
+            step = start_next(lang)
+            if step:
+                return pre + step[0], pre + step[1]
+            return pre.strip(), pre.strip()
         if reqs and stage == "variant" and not re.search(r"\b(and|also|too|plus|aur|bhi)\b|اور|بھی|ساتھ", both.lower()):
             want_ = size_pairs(both, spoken=True)
             if want_ and any(same_size(want_, size_pairs(v["name"] + " " + v["size"]))
@@ -4294,8 +4143,8 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
             if rest is None or not looks_like_answer(rest):
                 d, s_ = current_question(lang)
                 return pre + d, pre + s_
-            utt = rest                                  # the same sentence also answered the current question
-        print(f"🏷️ step: {stage}")
+            utt = rest
+        print(f"Step: {stage}")
         current.setdefault("said", []).append(utt.both)
         if stage == "brand":
             d, s_ = await handle_brand(utt, lang)
@@ -4307,7 +4156,6 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
             d, s_ = await handle_quantity(utt, lang)
         return pre + d, pre + s_
 
-    # 3. fresh request — rules first, LLM only if needed
     if has_any(both, CANCEL):
         return cancel_everything(lang)
 
@@ -4330,15 +4178,19 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
     fams = [r["pair"] for r in reqs if r["pair"]]
     wants_set = any(w in both.lower() for w in SET_WORDS)
 
+    if fams and not wants_set and weak:
+        said_ = join_names([pair_label(p_, lang) for p_ in dict.fromkeys(fams)], lang)
+        m = t(lang, f"I couldn't hear that clearly. Did you ask for {said_}? Please say the item again.",
+              f"آواز صاف نہیں آئی۔ کیا آپ نے {said_} کہا؟ براہِ کرم دوبارہ بولیں۔")
+        return m, m
     if fams and not wants_set:
-        # remember EVERY item of the sentence with the amounts / brands / sizes that came with it
         reqs, missing = await resolve_unknown(reqs, lang)
         added = register_requests(reqs)
         step = start_next(lang)
         pre = neg_pre
         if missing:
             pre += t(lang, f"Sorry, we don't have {', '.join(missing)}. ", f"معذرت، {'، '.join(missing)} دستیاب نہیں۔ ")
-        if added and (len(added) > 1 or any(r["qty"] for r in added)):     # say back what was understood, once
+        if added and (len(added) > 1 or any(r["qty"] for r in added)):
             ack = join_names([describe_request(r, lang, by_item=sum(1 for x in added if x["pair"] == r["pair"]) > 1) for r in added], lang)
             pre += t(lang, f"Got it: {ack}. ", f"ٹھیک ہے: {ack}۔ ")
         if step:
@@ -4347,7 +4199,7 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
         return pre + d, pre + s_
 
     if not fams and not wants_set and has_any(both, YES | NO | DONE) and len(tokens(both)) <= 6:
-        if has_any(both, NO) and not has_any(both, YES | DONE):      # a plain "no" must not place/ask to place the order
+        if has_any(both, NO) and not has_any(both, YES | DONE):
             if current_cart:
                 m = t(lang, "Okay. Tell me what else you need, or say confirm when you're ready.",
                       "ٹھیک ہے۔ اور کیا چاہیے؟ یا تیار ہوں تو کنفرم کہیں۔")
@@ -4355,8 +4207,11 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
         elif current_cart:
             return request_confirmation(lang)
 
+    if weak:
+        m = t(lang, "Sorry, I couldn't hear that clearly. Could you say it again?", "معذرت، آواز صاف نہیں آئی۔ دوبارہ بولیں؟")
+        return m, m
     parsed = await _aextract(utt.text, lang, history)
-    print(f"🧠 {parsed}")
+    print(f"Gemini result: {parsed}")
     intent = parsed.get("intent")
 
     if intent == "add_items":
@@ -4387,6 +4242,7 @@ async def route_utterance(utt: Utterance, history: list, lang: str):
     return reply, reply
 
 
+# main voice endpoint: audio comes in, text and audio reply go out
 @app.post("/converse")
 async def converse(request: Request, audio: UploadFile = File(...), history_json: str = Form("[]")):
     t0 = time.time()
@@ -4399,17 +4255,17 @@ async def converse(request: Request, audio: UploadFile = File(...), history_json
     with open(input_path, "wb") as f:
         f.write(await audio.read())
     try:
-        cur_lang, chosen = peek_session(sid)           # language of THIS customer (no state switch needed yet)
+        cur_lang, chosen = peek_session(sid)
         raw = await stt_raw(input_path, ct, cur_lang, chosen)
     finally:
         os.remove(input_path)
     t1 = time.time()
 
-    async with use_session(sid, user and user["id"]):   # from here on the module variables are this customer's
+    async with use_session(sid, user and user["id"]):
         utt = build_utterance(*raw)
-        print(f"👂 [{utt.lang}] {utt.text}  ⏱️ STT: {t1 - t0:.2f}s")
+        print(f"Heard [{utt.lang}] {utt.text}  | STT: {t1 - t0:.2f}s")
 
-        if not utt.text.strip():       # noise / nothing recognised: stay silent, the frontend just keeps listening
+        if not utt.text.strip():
             return {"detected_language": utt.lang, "user_text": "", "reply_text": "", "options": ui_options(utt.lang),
                     "cart": cart_snapshot(), "audio_url": None, "history": history}
 
@@ -4418,7 +4274,7 @@ async def converse(request: Request, audio: UploadFile = File(...), history_json
         display_text, speech_text = await route_utterance(utt, history, lang)
         log_turn(stage_before, family_before, utt, display_text)
         t2 = time.time()
-        print(f"🧠 Logic: {t2 - t1:.2f}s | TOTAL before audio: {t2 - t0:.2f}s\n🤖 {display_text}")
+        print(f"Logic: {t2 - t1:.2f}s | TOTAL before audio: {t2 - t0:.2f}s\nReply: {display_text}")
 
         history.append({"role": "user", "content": utt.text})
         history.append({"role": "assistant", "content": display_text})
@@ -4431,10 +4287,6 @@ async def converse(request: Request, audio: UploadFile = File(...), history_json
 async def get_audio(filename: str):
     return FileResponse(f"temp_audio/{os.path.basename(filename)}", media_type="audio/mpeg")
 
-
-# ============================================================
-# ROUTES — React frontend support
-# ============================================================
 
 @app.get("/cart")
 async def get_cart(request: Request):
@@ -4453,14 +4305,12 @@ async def get_cart(request: Request):
 
 @app.get("/me")
 async def who_am_i(request: Request):
-    """Who is logged in (the frontend shows the name / a login button)."""
     sid, user = await identify(request)
     return {"logged_in": bool(user), "user": user, "login_required": REQUIRE_LOGIN, "session": sid}
 
 
 @app.get("/orders")
 async def my_orders(request: Request):
-    """Past orders of the logged-in customer (newest first)."""
     sid, user = await identify(request)
     if not user:
         raise HTTPException(status_code=401, detail="login required")
@@ -4477,16 +4327,13 @@ async def my_orders(request: Request):
         db.close()
 
 
-# ============================================================
-# STORE CHECKOUT ORDERS + MY ORDERS
-# ============================================================
 FREE_DELIVERY_FROM = float(os.getenv("FREE_DELIVERY_FROM", "2000"))
 DELIVERY_FEE = float(os.getenv("DELIVERY_FEE", "150"))
 
 
+# order placed from the website checkout
 @app.post("/orders/place")
 async def place_web_order(request: Request, payload: dict):
-    """The website checkout saves its order here. Prices come from the catalogue, never from the browser."""
     sid, user = await identify(request)
     if ORDER_REQUIRES_LOGIN and not user:
         raise HTTPException(status_code=401, detail="Please sign in to place your order.")
@@ -4511,7 +4358,7 @@ async def place_web_order(request: Request, payload: dict):
     fee = 0.0 if subtotal >= FREE_DELIVERY_FROM else DELIVERY_FEE
     db = SessionLocal()
     try:
-        for ln in lines:                                     # stock goes down like it does for voice orders
+        for ln in lines:
             p = PRODUCTS[ln["id"]]
             if p["stock"] is not None:
                 p["stock"] = max(0, p["stock"] - ln["quantity"])
@@ -4519,7 +4366,7 @@ async def place_web_order(request: Request, payload: dict):
                 if row:
                     row.stock_quantity = p["stock"]
         order = Order(items_json=json.dumps(lines), total_price=subtotal + fee, status="confirmed",
-                      payment_method="Cash on Delivery",                 # the only payment method
+                      payment_method="Cash on Delivery",
                       user_id=user["id"] if user else None, session_id=sid, created_at=datetime.utcnow(), source="web",
                       customer_name=str(payload.get("customer_name") or "")[:120], phone=str(payload.get("phone") or "")[:40],
                       address=str(payload.get("address") or "")[:300], city=str(payload.get("city") or "")[:60],
@@ -4530,27 +4377,25 @@ async def place_web_order(request: Request, payload: dict):
         db.add_all([OrderItem(order_id=oid, product_id=ln["id"], name=ln["name"], brand=ln["brand"], quantity=ln["quantity"],
                               unit_price=ln["unit_price"], line_total=ln["line_total"]) for ln in lines])
         db.commit()
-        if user:                                             # remember the delivery details for the next order
+        if user:
             save_profile(user["id"], payload)
         return {"order_id": oid, "subtotal": subtotal, "delivery_fee": fee, "total": subtotal + fee,
                 "created_at": str(order.created_at)}
     except Exception as e:
         db.rollback()
-        print(f"⚠️ order not saved: {e}")
+        print(f"Warning: order not saved: {e}")
         raise HTTPException(status_code=500, detail="could not save the order")
     finally:
         db.close()
 
 
-# ============================================================
-# ADMIN: products, stock, orders, customers  (only for a Supabase user whose app_metadata.role = "admin")
-# ============================================================
-ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}   # optional extra admins by email
-ADMIN_SETUP_OPEN = os.getenv("ADMIN_SETUP_OPEN", "0") == "1"      # 1 = the admin login page may create more admin accounts
+ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
+ADMIN_SETUP_OPEN = os.getenv("ADMIN_SETUP_OPEN", "0") == "1"
 ORDER_STATUSES = ["pending", "confirmed", "packed", "out_for_delivery", "delivered", "cancelled"]
 LOW_STOCK = float(os.getenv("LOW_STOCK", "10"))
 
 
+# only admin accounts can use the admin endpoints
 async def require_admin(request):
     sid, user = await identify(request)
     if not user:
@@ -4561,13 +4406,12 @@ async def require_admin(request):
 
 
 def reload_catalog():
-    """The customer side (store + voice agent) picks up what the admin changed — no restart."""
     build_catalog()
     _POOL_CACHE.clear()
     _PTOK_CACHE.clear()
     for fam in BY_FAMILY:
         FAMILY_ALIASES.setdefault(fam, [fam.lower()])
-    print(f"🔄 Catalogue reloaded: {len(PRODUCTS)} products")
+    print(f"Catalogue reloaded: {len(PRODUCTS)} products")
 
 
 def product_row(p):
@@ -4598,7 +4442,6 @@ def apply_product_fields(p, data):
 
 @app.get("/catalog/products")
 async def public_products():
-    """Everything on sale (what the admin has switched on) — the store reads its products from here."""
     items = []
     db = SessionLocal()
     try:
@@ -4615,20 +4458,17 @@ async def public_products():
 
 @app.get("/admin/setup")
 async def admin_setup_status():
-    """Public: is there already an admin? (the admin login page shows 'Create account' when there is none)"""
     n = 0
     try:
         with engine.begin() as con:
             n = con.execute(sql_text("select count(*) from auth.users where raw_app_meta_data->>'role' = 'admin'")).scalar() or 0
     except Exception as e:
-        print(f"ℹ️ admin check failed: {e}")
+        print(f"Note: admin check failed: {e}")
     return {"exists": n > 0, "open": ADMIN_SETUP_OPEN or n == 0}
 
 
 @app.post("/admin/setup")
 async def admin_setup(request: Request):
-    """The person who just signed up in the admin app becomes an admin - allowed only while no admin exists yet
-    (or ADMIN_SETUP_OPEN=1 in backend/.env, e.g. while you are setting things up)."""
     sid, user = await identify(request)
     if not user:
         raise HTTPException(status_code=401, detail="Sign-up did not finish. Please try again.")
@@ -4653,6 +4493,7 @@ async def admin_me(request: Request):
     return {"ok": True, "email": user.get("email"), "name": user.get("name")}
 
 
+# admin part: products, orders, customers and stats
 @app.get("/admin/products")
 async def admin_products(request: Request):
     await require_admin(request)
@@ -4853,6 +4694,7 @@ async def admin_stats(request: Request):
         db.close()
 
 
+# customer profile: name, phone and address
 @app.get("/me/profile")
 async def get_my_profile(request: Request):
     sid, user = await identify(request)
@@ -4869,13 +4711,6 @@ async def put_my_profile(request: Request, payload: dict):
     save_profile(user["id"], payload)
     return {"profile": load_profile(user["id"])}
 
-
-# ============================================================
-# PHOTO OF A GROCERY LIST -> items
-# ============================================================
-# Gemini only READS the list (one line per item, exactly as written). It never chooses products. The dataset
-# matcher below (the same one the voice agent uses) finds the product, so nothing is added that is not in the
-# list and everything uncertain is shown to the customer to choose.
 
 SCAN_PROMPT = """You are reading a photo of a customer's grocery shopping list (English, Urdu, Roman Urdu or a mix; printed or handwritten).
 Copy EVERY item line exactly as written. Do not translate, do not correct, do not guess, do not add items.
@@ -4913,7 +4748,6 @@ def _bnorm(x):
 
 
 def brands_in_text(text):
-    """Brands named in the text, spelled any way ("Lays" = "Lay's" = "lay s"). -> {normalised brand: families}"""
     if len(_BRAND_NORM) != len(BRAND_FAMS):
         _BRAND_NORM.clear()
         for k_, fams_ in BRAND_FAMS.items():
@@ -4925,11 +4759,10 @@ def brands_in_text(text):
     return {n_: f_ for n_, f_ in _BRAND_NORM.items() if n_ in cands}
 
 
+# matches the items read from a grocery list photo with our products
 def scan_match(text, qty_text, english=None):
-    """One list line -> {"status": matched | choose | unknown, "candidates": [...]}. Call inside use_session()."""
     clause = f"{text} {qty_text or ''}".strip()
     pairs = detect_families(clause)
-    # a brand on the line decides the family: "Lays french cheese" is Lay's chips, not cheese
     brands = brands_in_text(text)
     if brands:
         bfams = set().union(*brands.values())
@@ -4944,7 +4777,7 @@ def scan_match(text, qty_text, english=None):
     if not pool:
         pool = list(PRODUCTS.values())
         scores = rank_products(pool, text) or []
-        if not scores or max(scores) < 2.5:                     # nothing in the catalogue resembles this line
+        if not scores or max(scores) < 2.5:
             return {"text": text, "english": english or text, "qty_text": qty_text, "status": "unknown", "candidates": []}
         best = max(scores)
         pool = [p for p, sc in zip(pool, scores) if sc >= best * 0.75][:12]
@@ -4963,12 +4796,13 @@ def scan_match(text, qty_text, english=None):
     near = sorted(near, key=lambda p: (p["brand"], p["price"]))[:8]
     cands = [_cand_view(p, qty_for(p)) for p in near]
     status = "matched" if len(near) == 1 else ("choose" if near else "unknown")
-    taken = {p["id"] for p in near}                                  # the rest of the same kind of item ("more options")
+    taken = {p["id"] for p in near}
     more = [_cand_view(p, qty_for(p)) for p in sorted(pool, key=lambda p: (p["brand"], p["price"])) if p["id"] not in taken][:16]
     return {"text": text, "english": english or text, "qty_text": qty_text, "status": status, "candidates": cands,
             "more": more if near else []}
 
 
+# reads a grocery list photo with Gemini
 @app.post("/scan-list")
 async def scan_list(request: Request, image: UploadFile = File(...)):
     sid, user = await identify(request)
@@ -4979,17 +4813,17 @@ async def scan_list(request: Request, image: UploadFile = File(...)):
     try:
         lines = await asyncio.wait_for(asyncio.to_thread(_vision_lines_sync, data, mime), 40)
     except Exception as e:
-        print(f"⚠️ scan failed: {e!r}")
+        print(f"Warning: scan failed: {e!r}")
         raise HTTPException(status_code=502, detail="could not read the picture, please try a clearer photo")
     key = f"scan:{uuid.uuid4().hex}"
-    async with use_session(key, None):                       # a clean, throw-away conversation state
+    async with use_session(key, None):
         results = [scan_match(l["text"], l["qty"], l.get("english")) for l in lines]
     SESSIONS.pop(key, None)
-    print(f"🧾 scanned list: {len(lines)} lines, {sum(r['status'] == 'matched' for r in results)} matched")
+    print(f"scanned list: {len(lines)} lines, {sum(r['status'] == 'matched' for r in results)} matched")
     return {"lines": results}
 
 
-
+# simple check that the server is running
 @app.get("/health")
 async def health():
     return {"ok": True, "products": len(PRODUCTS), "sessions_in_memory": len(SESSIONS), "redis": _redis is not None,
@@ -5009,9 +4843,6 @@ async def select_option(payload: dict, request: Request):
 
 
 async def _select_option(payload: dict):
-    """User TAPPED something in the pop-up.
-    value = brand name | type label | 'pid:<id>' | 'next';  qty (optional) = number of packs -> goes straight to cart.
-    At the quantity step send only {"qty": n}."""
     value = (payload.get("value") or "").strip()
     qty = _num(payload.get("qty"))
     qty = qty if qty and 0 < qty <= 100 else None
@@ -5034,6 +4865,7 @@ async def _select_option(payload: dict):
     return {"reply_text": d, "options": ui_options(lang), "cart": cart_snapshot(), "audio_url": tts_url(s_, lang)}
 
 
+# when the customer taps a button instead of speaking
 @app.post("/action")
 async def button_action(payload: dict, request: Request):
     sid, user = await identify(request)
@@ -5067,7 +4899,6 @@ async def cart_update(payload: dict, request: Request):
 
 
 def _cart_update(payload: dict):
-    """Basket +/- and remove buttons. qty <= 0 removes the line."""
     global order_pending_confirmation
     pid = _num(payload.get("id"))
     qty = _num(payload.get("qty"))

@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Plus, Minus, Package, Heart, Eye, Leaf } from 'lucide-react';
 import { FitImage } from './FitImage';
@@ -14,7 +13,6 @@ interface ProductCardProps {
   onToggleFavorite?: (product: Product) => void;
 }
 
-// Fresh badge only for fruits and vegetables
 const isFreshProduce = (p: Product) =>
   /fruit|vegetable|veg/i.test(
     `${p.category || ''} ${p.subcategory || ''}`

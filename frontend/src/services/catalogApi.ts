@@ -1,4 +1,3 @@
-// The store's products come from the backend (= what the admin added / changed). No Excel data in the page any more.
 import type { Product } from '../types';
 
 function base() {

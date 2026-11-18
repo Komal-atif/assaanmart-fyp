@@ -104,6 +104,8 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
   const playerRef = useRef<HTMLAudioElement | null>(null);
   const resolverRef = useRef<(() => void) | null>(null);
   const tokenRef = useRef(0);
+  const bargedRef = useRef(false);
+  const bargeOkRef = useRef(false);
   const prefixRef = useRef('');        // e.g. "Okay, Dalda oil." said before the next item's question
   const qtyModeRef = useRef<'confirm' | 'ask' | null>(null); // after choosing a product: keep the written quantity? / how many?
   const byId = useMemo(() => new Map(products.map((p) => [String(p.id), p])), [products]);
@@ -128,6 +130,17 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
   const onFile = async (file?: File | null) => {
     if (!file) return;
     setError('');
+    const isImage = /^image\/(jpeg|jpg|png|webp|heic|heif)$/i.test(file.type) || /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name);
+    if (!isImage) {                                   // a PDF or any other file: say so, never try to read it
+      setPreview('');
+      setError('This file type is not supported. Please upload a JPG or PNG photo of your list.');
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setPreview('');
+      setError('This photo is larger than 8 MB. Please choose a smaller photo.');
+      return;
+    }
     setPreview(URL.createObjectURL(file));
     setBusy(true);
     try {
@@ -304,6 +317,9 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
       };
       a.onended = done;
       a.onerror = done;
+      a.onplaying = () => {
+        if (bargeOkRef.current && voiceOnRef.current && openRef.current) voice.listen({ bargeIn: true });   // the customer may interrupt
+      };
       a.src = url.startsWith('http') ? url : `${getBackendUrl()}${url}`;
       a.play().catch(done);
     });
@@ -333,12 +349,20 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
     if (!voiceOnRef.current || !openRef.current) return;
     const my = ++tokenRef.current;
     voice.pause();
+    bargedRef.current = false;
+    bargeOkRef.current = listen;
     setVPhase('speaking');
     try {
       const d = await scanSay(text, lang);
       if (my !== tokenRef.current) return;
       if (d.audio_url) {
         await playUrl(d.audio_url);
+        bargeOkRef.current = false;
+        if (bargedRef.current) {             // interrupted: already listening to the customer
+          bargedRef.current = false;
+          if (my === tokenRef.current) setVPhase('listening');
+          return;
+        }
         await new Promise((r) => setTimeout(r, 350));
       }
     } catch {
@@ -468,7 +492,13 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
     }
   };
 
-  const voice = useVoiceLoop({ onUtterance: handleUtterance });
+  const voice = useVoiceLoop({
+    onUtterance: handleUtterance,
+    onBargeIn: () => {
+      bargedRef.current = true;
+      stopSpeech();
+    },
+  });
 
   const stopVoice = () => {
     tokenRef.current += 1;
@@ -631,6 +661,7 @@ export const GroceryImageScannerModal: React.FC<Props> = ({ isOpen, onClose, pro
                   </div>
                   <span className="text-xs text-[#4d7a5c] text-center">English, Urdu or Roman Urdu · printed or handwritten</span>
                   {camError && <span className="text-xs font-semibold text-red-600 text-center">{camError}</span>}
+                  {error && <span className="text-xs font-semibold text-red-600 text-center" role="alert">{error}</span>}
                 </div>
               ) : (
                 <div className="flex flex-col items-center text-center gap-3 py-2">

@@ -1,5 +1,3 @@
-// Voice assistant <-> FastAPI backend. Backend address comes from VITE_BACKEND_URL (default http://127.0.0.1:8000).
-
 import { supabase } from '../supabaseClient';
 
 const SID_KEY = 'am_voice_sid';
@@ -8,7 +6,6 @@ export function getBackendUrl(): string {
   return (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
 }
 
-// One id per browser, so every customer gets their own cart on the server.
 function sessionId(): string {
   try {
     let id = localStorage.getItem(SID_KEY);
@@ -22,8 +19,6 @@ function sessionId(): string {
   }
 }
 
-// Every request carries the browser's session id and, when the customer is logged in, the Supabase login token,
-// so the backend knows whose cart and whose order it is.
 export async function apiHeaders(json = false): Promise<Record<string, string>> {
   const h: Record<string, string> = { 'X-Session-Id': sessionId() };
   if (json) h['Content-Type'] = 'application/json';
@@ -126,8 +121,8 @@ export async function checkBackendHealth(): Promise<boolean> {
 }
 
 export interface GreetOptions {
-  lang?: 'english' | 'urdu'; // language already chosen (welcome agent) -> skip the language question
-  resume?: boolean;          // keep the cart and conversation
+  lang?: 'english' | 'urdu'; 
+  resume?: boolean;         
 }
 
 export const greetVoiceSession = async (opts: GreetOptions = {}) => {
@@ -138,7 +133,6 @@ export const greetVoiceSession = async (opts: GreetOptions = {}) => {
   return handle<VoiceTurnResponse>(await post(`/greet${q ? `?${q}` : ''}`), '/greet');
 };
 
-/** Photo scanner -> voice: the confirmed items go into the voice basket, the agent asks about the open lines. */
 export interface VoicePreload {
   lang: 'english' | 'urdu';
   cart: { id: number; qty: number }[];
@@ -147,7 +141,7 @@ export interface VoicePreload {
 export const preloadVoiceSession = async (payload: VoicePreload) =>
   handle<VoiceTurnResponse>(await post('/voice/preload', payload), '/voice/preload');
 
-// ---- welcome agent (page open: language -> voice or browse -> what next after an order) ----
+// welcome agent 
 export type WelcomeStage = 'language' | 'mode' | 'after_order';
 export interface WelcomeSay {
   text: string;
@@ -196,7 +190,7 @@ export const getVoiceCart = async () =>
   handle<VoiceCart>(await fetch(`${getBackendUrl()}/cart`, { headers: await apiHeaders() }), '/cart');
 
 
-// ---- photo scanner by voice ----
+// photo scanner by voice
 export interface ScanVoiceOption { id?: number; name: string; brand: string; size: string }
 export interface ScanVoiceReply { heard: string; action: 'pick' | 'skip' | 'back' | 'more' | 'yes' | 'no' | 'review' | 'qty' | 'ambiguous' | 'checkout' | 'browse' | null; index?: number; indices?: number[]; value?: number }
 
@@ -213,7 +207,7 @@ export async function scanReply(audioBlob: Blob, context: 'detected' | 'pick' | 
   return handle<ScanVoiceReply>(res, '/scan/reply');
 }
 
-// ---- sign-up form by voice ----
+// sign-up form by voice
 export interface FormVoiceReply { heard: string; value?: string; ok: boolean; action?: string | null; which?: 'name' | 'phone' | 'address' | null }
 
 export async function formVoiceReply(audioBlob: Blob, field: 'name' | 'phone' | 'address' | 'confirm', lang: 'english' | 'urdu') {

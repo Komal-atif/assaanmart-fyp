@@ -38,10 +38,7 @@ interface FlyingItem {
 }
 
 export default function App() {
-  // Navigation View: the store opens first; Services and Contact Us are separate pages
   const [currentView, setCurrentView] = useState<AppView>('landing');
-
-  // Products come from the backend (what the admin added / changed). The old Excel data is used ONLY if the backend cannot be reached.
   const [productList, setProductList] = useState<Product[]>([]);
   useEffect(() => {
     let alive = true;
@@ -54,7 +51,7 @@ export default function App() {
       }
     };
     load();
-    const timer = setInterval(load, 30000);                    // admin changes show up within 30 s
+    const timer = setInterval(load, 30000);                    
     const onFocus = () => load();
     window.addEventListener('focus', onFocus);
     return () => { alive = false; clearInterval(timer); window.removeEventListener('focus', onFocus); };
@@ -71,12 +68,10 @@ export default function App() {
     }
   });
 
-  // Keep the Supabase login in step with the page: restore it after a refresh, clear it after sign-out.
   useEffect(() => {
     const toUser = (u: any): User =>
       ({
         name: u.user_metadata?.full_name || u.user_metadata?.name || (/^\d{11}@/.test(u.email || '') ? 'Shopper' : u.email?.split('@')[0]) || 'Shopper',
-        // phone accounts use a placeholder email behind the scenes: never show it
         email: /^\d{11}@/.test(u.email || '') ? '' : u.email || '',
         phone: u.user_metadata?.phone || (/^\d{11}@/.test(u.email || '') ? u.email.split('@')[0] : ''),
         address: u.user_metadata?.address || '',
@@ -108,11 +103,9 @@ export default function App() {
     }
   });
 
-  // Active Category & Search
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // favourites (the hearts): kept in this browser, shown in the header and on top of the products
   const [favorites, setFavorites] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem('am_favorites') || '[]'); } catch { return []; }
   });
@@ -134,15 +127,13 @@ export default function App() {
   const [isImageScannerOpen, setIsImageScannerOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
-  const [checkoutAfterLogin, setCheckoutAfterLogin] = useState(false); // a guest pressed checkout: sign in first, then continue
+  const [checkoutAfterLogin, setCheckoutAfterLogin] = useState(false); 
   const [selectedProductDetail, setSelectedProductDetail] = useState<Product | null>(null);
 
-  // Flying animations & Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [flyingItems, setFlyingItems] = useState<FlyingItem[]>([]);
   const [cartHit, setCartHit] = useState(0);
 
-  // Replay the header logo intro when the page changes or any modal/drawer closes.
   const [logoPlayKey, setLogoPlayKey] = useState(0);
   const anyModalOpen =
     isFavoritesOpen || isCartOpen || isVoiceOpen || isOrdersOpen || isImageScannerOpen ||
@@ -160,7 +151,6 @@ export default function App() {
   const cartBtnRef = useRef<HTMLButtonElement | null>(null);
   const toastTimerRef = useRef<any>(null);
 
-  // Sync cart to local storage
   useEffect(() => {
     try {
       localStorage.setItem('am_cart', JSON.stringify(cart));
@@ -175,12 +165,10 @@ export default function App() {
     }, 2400);
   };
 
-  // Cart item map for instant O(1) quantity lookups
   const cartMap = useMemo(() => {
     return Object.fromEntries(cart.map((i) => [i.id, i.quantity]));
   }, [cart]);
 
-  // Video-accurate Flying Arc Animation to Cart
   const triggerFlyAnimation = (element: HTMLElement, product: Product) => {
     const toRect = cartBtnRef.current?.getBoundingClientRect();
     const cardEl = element.closest('.db-gcard');
@@ -289,7 +277,6 @@ export default function App() {
   ) => {
     setCart((prev) => {
       const prevSet = new Set(prevIds);
-      // remove what the voice session added earlier, then put in the agent's current basket
       let updated = prev.filter((i) => !prevSet.has(i.id));
       items.forEach(({ product, quantity }) => {
         if (product.price == null) return;
@@ -307,7 +294,6 @@ export default function App() {
     setCartHit((h) => h + 1);
   };
 
-  // Items the customer reviewed after scanning a photo of their list: add them and show the cart so they can order.
   const handleAddScanned = (items: { product: Product; quantity: number }[]) => {
     setCart((prev) => {
       let updated = [...prev];
@@ -326,11 +312,9 @@ export default function App() {
     showToast(`Added ${items.length} item${items.length === 1 ? '' : 's'} from your list`);
   };
 
-  // the cart drawer's checkout button, and the scanner's "checkout" (button or voice), do the same thing
   const proceedToCheckout = () => {
     setIsCartOpen(false);
     if (!user) {
-      // browsing and filling the cart is free; placing an order needs an account
       setCheckoutAfterLogin(true);
       setIsAuthOpen(true);
       showToast('Please sign in to place your order. Your cart is saved.');
@@ -367,7 +351,6 @@ export default function App() {
       return;
     }
     const scrollToIt = () => document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    // "How it works" lives on the landing page
     if (sectionId === 'how-it-works') {
       if (currentView !== 'landing') {
         setCurrentView('landing');
@@ -375,7 +358,6 @@ export default function App() {
       } else scrollToIt();
       return;
     }
-    // sections live on the store home: leave other pages / search / category first, then scroll once it has drawn
     if (currentView !== 'dashboard' || !document.getElementById(sectionId)) {
       setCurrentView('dashboard');
       setSearchTerm('');
@@ -391,13 +373,10 @@ export default function App() {
   return (
     <div className="dashboard-page min-h-screen text-[#2a6b43] flex flex-col font-sans selection:bg-[#b3e4c4] selection:text-[#2a6b43] relative">
       
-      {/* Dynamic Animated Living Gradient Mesh & Floating Orbs Background */}
       <AnimatedBackground />
 
-      {/* SVG Clip Path definitions for video card animations */}
       <CardShapes />
 
-      {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 bg-[#1daa61] text-white px-5 py-3 rounded-full shadow-2xl text-xs sm:text-sm font-semibold border border-white/20 animate-in fade-in slide-in-from-bottom-4 duration-200">
           <div className="w-5 h-5 rounded-full bg-[#7fcf9a] text-white flex items-center justify-center shrink-0">

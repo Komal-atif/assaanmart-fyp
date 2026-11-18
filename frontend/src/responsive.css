@@ -1,9 +1,6 @@
 
-/* Mobile and Tablet Responsive Design */
-
 @media (max-width: 768px) {
 
-  /* Prevent horizontal scrolling */
   body {
     overflow-x: hidden;
   }

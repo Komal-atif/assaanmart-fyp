@@ -10,7 +10,7 @@ interface ProductDetailModalProps {
   onAddToCart: (product: Product, quantity: number) => void;
 }
 
-// the leaf badge belongs to fruits and vegetables only
+// Fresh ka badge sirf fruits aur vegetables par
 const isFreshProduce = (p: Product) => /fruit|veg/i.test(`${p.category || ''} ${p.subcategory || ''}`);
 
 const INFO = [
@@ -24,7 +24,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
   const [imageError, setImageError] = useState(false);
   const [limitHit, setLimitHit] = useState(false);
 
-  // a new product always starts again at 1
+  // naya product khule to quantity phir 1 se
   useEffect(() => {
     setQty(1);
     setLimitHit(false);
@@ -40,6 +40,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
   const canBuy = !isOutOfStock && !isPriceUnavailable;
   const fresh = isFreshProduce(product);
 
+  // cart mein dal kar window band
   const handleConfirm = () => {
     onAddToCart(product, qty);
     onClose();
@@ -51,7 +52,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
         className="relative w-full max-w-3xl bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-y-auto md:overflow-hidden flex flex-col md:flex-row max-h-[94dvh] sm:max-h-[92vh] md:h-[580px]"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* close */}
         <button
           onClick={onClose}
           className="absolute top-3 right-3 z-20 w-9 h-9 rounded-full bg-white/90 backdrop-blur border border-[#e0f4e7] hover:bg-[#e0f4e7] text-[#2a6b43] flex items-center justify-center transition-colors cursor-pointer shadow-sm"
@@ -60,7 +60,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
           <X className="w-5 h-5" />
         </button>
 
-        {/* ---------- left: the picture fills the panel from the top down to the category row ---------- */}
         <div className="md:w-[46%] shrink-0 flex flex-col bg-gradient-to-br from-[#f3fbf6] via-white to-[#e0f4e7] md:border-r border-[#e0f4e7]">
           <div className="db-gimg fill relative flex-1 min-h-[270px] sm:min-h-[320px]">
             {product.image && !imageError ? (
@@ -79,7 +78,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
               </div>
             )}
 
-            {/* badges on the picture */}
             <div className="absolute top-3 left-3 flex flex-col items-start gap-1.5 z-10">
               {isOutOfStock ? (
                 <span className="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-[11px] font-bold">Out of stock</span>
@@ -101,7 +99,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
           </div>
         </div>
 
-        {/* ---------- right: details ---------- */}
         <div className="flex-1 min-w-0 p-5 sm:p-8 flex flex-col gap-5 text-left md:overflow-y-auto">
           <div>
             <div className="flex items-center gap-2 mb-2 pr-10">
@@ -121,7 +118,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
             </p>
           </div>
 
-          {/* price */}
           <div className="rounded-xl bg-gradient-to-r from-[#f3fbf6] to-[#e0f4e7] border border-[#b3e4c4] px-4 py-3 flex items-end justify-between gap-3">
             <div>
               <span className="text-xs text-[#4d7a5c] font-semibold block">Price per pack</span>
@@ -135,7 +131,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
             )}
           </div>
 
-          {/* quantity */}
           {canBuy && (
             <div>
               <label className="text-xs font-bold text-[#4d7a5c] block mb-2">Quantity</label>
@@ -149,6 +144,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
                 </button>
                 <span className="w-12 text-center font-black text-lg text-[#1f5233]">{qty}</span>
                 <button
+                  // limit se zyada quantity nahi barh sakti
                   onClick={() => { if (qty >= maxFor(product)) setLimitHit(true); else setQty(qty + 1); }}
                   className="w-9 h-9 rounded-full bg-[#1daa61] hover:bg-[#148a4c] flex items-center justify-center text-white transition-colors cursor-pointer active:scale-90"
                   aria-label="More"
@@ -160,7 +156,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
             </div>
           )}
 
-          {/* why order here */}
           <div className="grid grid-cols-3 gap-2 mt-auto">
             {INFO.map((i) => (
               <div key={i.title} className="rounded-2xl bg-[#f3fbf6] border border-[#e0f4e7] px-2 py-3 text-center">
@@ -173,7 +168,6 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({ product,
             ))}
           </div>
 
-          {/* add to cart */}
           <button
             onClick={handleConfirm}
             disabled={!canBuy}

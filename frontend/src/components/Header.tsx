@@ -26,16 +26,13 @@ interface HeaderProps {
   favoritesCount?: number;
   onOpenFavorites?: () => void;
   cartBtnRef: React.RefObject<HTMLButtonElement | null>;
-  /** change this number to replay the logo intro (page change / modal closed) */
   logoPlayKey?: number;
 }
 
-// an item with `section` scrolls to that part of the store page instead of opening a page
 type NavItem = { key: string; view?: AppView; section?: string; label: string };
 // store pages
 const DASH_NAV: NavItem[] = [
-];   // the store pages have no page links (Services / Contact Us live only on the landing page)
-// landing page: How it works scrolls to its section on the same page
+];   
 const LAND_NAV: NavItem[] = [
   { key: 'how', section: 'how-it-works', label: 'How it works' },
   { key: 'services', view: 'services', label: 'Services' },
@@ -71,8 +68,6 @@ export const Header: React.FC<HeaderProps> = ({
   logoPlayKey = 0,
 }) => {
   const [isScrolled, setIsScrolled] = useState(false);
-  // the cart button is animated with a class that is switched on for a moment (never by re-creating the element,
-  // which breaks when the browser's page translator has touched the page and showed two icons)
   const [cartPop, setCartPop] = useState(false);
   useEffect(() => {
     if (!cartHit && !cartCount) return;
@@ -81,7 +76,7 @@ export const Header: React.FC<HeaderProps> = ({
     return () => window.clearTimeout(id);
   }, [cartHit, cartCount]);
   const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
-  const [accountOpen, setAccountOpen] = useState(false); // account circle menu
+  const [accountOpen, setAccountOpen] = useState(false); 
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const mobileSearchRef = useRef<HTMLDivElement>(null);
   const accountRef = useRef<HTMLDivElement>(null);
@@ -103,7 +98,6 @@ export const Header: React.FC<HeaderProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // closing the menus whenever the page changes
   useEffect(() => { setAccountOpen(false); }, [currentView]);
 
   const suggestions = searchTerm.trim().length > 1
@@ -120,7 +114,6 @@ export const Header: React.FC<HeaderProps> = ({
     if (n.section) { onNavigateSection(n.section); setAccountOpen(false); }
     else if (n.view) go(n.view);
   };
-  // the landing, Services and Contact Us pages share the same (landing) header
   const isLanding = currentView === 'landing' || currentView === 'services' || currentView === 'contact';
   const nav = isLanding ? LAND_NAV : DASH_NAV;
   const isActive = (n: { view?: AppView }) => Boolean(n.view) && currentView === n.view;
@@ -218,7 +211,6 @@ export const Header: React.FC<HeaderProps> = ({
                 }`}
               >
                 {n.label}
-                {/* underline: green when selected, amber while hovering another item */}
                 <span
                   className={`pointer-events-none absolute left-3 right-3 bottom-0 h-[3px] rounded-full origin-center transition-transform duration-300 ease-out ${
                     isActive(n) ? 'scale-x-100 bg-[#1DAA61]' : 'scale-x-0 group-hover:scale-x-100 bg-[#f59e0b]'
@@ -231,7 +223,7 @@ export const Header: React.FC<HeaderProps> = ({
           {/* desktop search */}
           {isLanding ? <div className="hidden lg:block flex-1" /> : <div className="relative flex-1 max-w-xs hidden lg:block">{searchBox(false)}</div>}
 
-          {/* right actions */}
+          {/* right side: cart, account */}
           <div className="flex items-center gap-2 ml-auto lg:ml-0 shrink-0">
             {isLanding && (
               <button
@@ -295,7 +287,7 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </button>
 
-            {/* account circle */}
+            {/* account */}
             {user ? (
               <div ref={accountRef} className="relative">
                 <button
@@ -360,7 +352,7 @@ export const Header: React.FC<HeaderProps> = ({
 
     </header>
 
-    {/* phones & tablets: the search bar takes the whole line (voice and camera sit inside it), the page links are below */}
+    {/* Mobile Navigation */}
     <div className="lg:hidden bg-white border-b border-[#e0f4e7] px-3 sm:px-6 pt-2.5 pb-2 space-y-1.5">
       {!isLanding && <div className="w-full">{searchBox(true)}</div>}
       <nav className={`grid gap-1 ${nav.length ? "" : "hidden"}`} style={{ gridTemplateColumns: `repeat(${Math.max(1, nav.length)}, minmax(0, 1fr))` }}>

@@ -1,19 +1,10 @@
 import React, { useEffect, useState } from 'react';
 
 interface FitImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
-  /** empty border kept around the product (0.08 = 8 % of the box) */
   pad?: number;
-  /** never zoom in more than this */
   maxScale?: number;
 }
 
-/**
- * Product photos come with big white margins, so the product looks tiny in its box.
- * This image looks at its own pixels once it has loaded, finds where the product really is,
- * and zooms / re-centres it so the product fills the box (the white margin is simply cut off).
- * The zoom is stored in the CSS variable --fit, which index.css applies to `.db-gimg img`.
- * If the browser cannot read the pixels (a picture from another website without CORS), nothing changes.
- */
 export const FitImage: React.FC<FitImageProps> = ({ pad = 0.08, maxScale = 3, style, onLoad, ...rest }) => {
   const [fit, setFit] = useState('');
 
@@ -35,7 +26,6 @@ export const FitImage: React.FC<FitImageProps> = ({ pad = 0.08, maxScale = 3, st
       canvas.height = ch;
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) return;
-      // draw the picture the same way the browser shows it: "contain" inside the box
       const s = Math.min(cw / img.naturalWidth, ch / img.naturalHeight);
       const dw = img.naturalWidth * s;
       const dh = img.naturalHeight * s;
@@ -65,7 +55,6 @@ export const FitImage: React.FC<FitImageProps> = ({ pad = 0.08, maxScale = 3, st
       if (k < 1.08) return setFit('');
       setFit(`translate(${(-(cx - 0.5) * k * 100).toFixed(2)}%, ${(-(cy - 0.5) * k * 100).toFixed(2)}%) scale(${k.toFixed(3)})`);
     } catch {
-      /* the pixels cannot be read: show the picture normally */
     }
   };
 

@@ -22,8 +22,6 @@ import {
   VoiceOptions,
 } from '../services/voiceApi';
 
-/** How the voice window starts: nothing = the normal greeting; lang = language already chosen by the welcome agent;
- *  preload = the photo scanner hands over the open lines of the customer's list. */
 export interface VoiceLaunch {
   lang?: 'english' | 'urdu';
   preload?: VoicePreload;
@@ -33,12 +31,9 @@ interface VoiceAssistantModalProps {
   isOpen: boolean;
   onClose: () => void;
   products: Product[];
-  /** Replace the items this voice session put in the store cart (prevIds) with the agent's current basket. */
   onSyncVoiceCart: (prevIds: string[], items: { product: Product; quantity: number }[]) => void;
   launch?: VoiceLaunch | null;
-  /** An order was placed by voice and the agent finished confirming it: the parent closes this window. */
   onOrderPlaced?: () => void;
-  /** A guest said "confirm": the agent asked them to sign in first. */
   onNeedLogin?: () => void;
 }
 
@@ -60,7 +55,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const [cart, setCart] = useState<VoiceCart>(EMPTY_VOICE_CART);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  const [interrupt, setInterrupt] = useState(true); // customer can talk while the agent is still speaking
+  const [interrupt, setInterrupt] = useState(true);
 
   const playerRef = useRef<HTMLAudioElement | null>(null);
   const resolverRef = useRef<(() => void) | null>(null);
@@ -71,12 +66,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const interruptRef = useRef(true);
   interruptRef.current = interrupt;
 
-  // Latest props for use inside long-lived callbacks
   const productsById = useMemo(() => new Map(products.map((p) => [String(p.id), p])), [products]);
   const propsRef = useRef({ productsById, onSyncVoiceCart });
   propsRef.current = { productsById, onSyncVoiceCart };
 
-  const syncedIdsRef = useRef<string[]>([]); // store-cart ids this voice session has added
+  const syncedIdsRef = useRef<string[]>([]);
   const cartRef = useRef<VoiceCart>(EMPTY_VOICE_CART);
   const [orderMessage, setOrderMessage] = useState('');
   const orderPlacedRef = useRef(false);
@@ -88,27 +82,24 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const onOrderPlacedRef = useRef(onOrderPlaced);
   onOrderPlacedRef.current = onOrderPlaced;
 
-  // ---- audio ---------------------------------------------------------------
-  // `onStart` fires when the sound REALLY starts, so "Speaking…" is only shown while the customer can hear the agent.
-  // If the sound has not started after 8 s the turn is given up (the window never hangs waiting for audio).
-  // Phones only let a page play sound after a tap. A silent clip played inside the first tap "unlocks" the one audio
-  // element used for the whole conversation, so the agent's later replies are allowed to play too.
   const [blockedTap, setBlockedTap] = useState<null | (() => void)>(null);
+  // phone par pehle tap ke baad hi audio chalta hai isliye ek khali awaz chala kar unlock karte hain
   const unlockAudio = () => {
     const a = playerRef.current || (playerRef.current = new Audio());
-    if (a.src) return;   // already in use (or already unlocked)
+    if (a.src) return;
     const silent = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
     a.src = silent;
     a.play().then(() => { if (a.src === silent) a.pause(); }).catch(() => { if (a.src === silent) a.removeAttribute('src'); });
   };
 
+  // audio chalane ka function, 8 second tak awaz na aye to turn chhor dete hain
   const playOnce = (url: string, onStart?: () => void) =>
     new Promise<void>((resolve) => {
       const a = playerRef.current || (playerRef.current = new Audio());
       if (resolverRef.current) resolverRef.current();
       resolverRef.current = resolve;
       let started = false;
-      const guard = window.setTimeout(() => { if (!started) done(); }, IS_MOBILE ? 20000 : 8000);   // phones: slower network, more time
+      const guard = window.setTimeout(() => { if (!started) done(); }, IS_MOBILE ? 20000 : 8000);
       const done = () => {
         window.clearTimeout(guard);
         if (resolverRef.current === resolve) resolverRef.current = null;
@@ -127,7 +118,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       a.src = url.startsWith('http') ? url : `${getBackendUrl()}${url}`;
       a.play().catch((e) => {
         if (e && e.name === 'NotAllowedError') {
-          // the browser blocked the sound: ask for one tap, then play it (never leave the customer in silence)
           window.clearTimeout(guard);
           setBlockedTap(() => () => { setBlockedTap(null); a.play().catch(done); });
           window.setTimeout(() => { if (!started) { setBlockedTap(null); done(); } }, 60000);
@@ -135,7 +125,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       });
     });
 
-  const lastAudioRef = useRef<string | null>(null);   // the agent's last sentence, repeated when the customer is silent
+  const lastAudioRef = useRef<string | null>(null);
   const idleCountRef = useRef(0);
 
   const stopSpeech = () => {
@@ -147,20 +137,20 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   };
 
+  // agent bolta hai, phir customer ko sunne lagta hai
   const speak = useCallback(async (path?: string | null) => {
     const my = ++tokenRef.current;
     bargedRef.current = false;
     if (path) {
       lastAudioRef.current = path;
-      setPhase('thinking');   // the sound is being fetched: not "speaking" yet
+      setPhase('thinking');
       await playOnce(path, () => {
         if (my !== tokenRef.current) return;
         setPhase('speaking');
-        // the microphone listens for a real interruption only while the agent is audible
         if (interruptRef.current && activeRef.current) voice.listen({ bargeIn: true });
         else voice.pause();
       });
-      await new Promise((r) => setTimeout(r, 200)); // let the room echo of the agent's voice fade before listening
+      await new Promise((r) => setTimeout(r, 200));
     }
     if (my !== tokenRef.current) return;
     if (needLoginRef.current) {
@@ -171,7 +161,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       return;
     }
     if (orderPlacedRef.current) {
-      // the order was placed and the agent has said so: close the window, the welcome agent asks what next
       orderPlacedRef.current = false;
       await new Promise((r) => setTimeout(r, 1200));
       activeRef.current = false;
@@ -191,7 +180,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   }, []);
 
-  // ---- keep the store cart equal to the agent's basket ----------------------
+  // voice wali basket ko store ki cart ke barabar rakhta hai
   const syncStoreCart = (c: VoiceCart) => {
     const { productsById: byId, onSyncVoiceCart: sync } = propsRef.current;
     const items: { product: Product; quantity: number }[] = [];
@@ -218,10 +207,9 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     if (prev.length || items.length) sync(prev, items);
   };
 
+  // cart khali ho gayi aur reply mein order ka lafz ho to samjho order lag gaya
   const applyCart = (c: VoiceCart | undefined, reply?: string) => {
     if (!c) return;
-    // basket emptied by the agent (not a cancel) = the backend placed the order
-    // (only when the reply really says so: a lost / restarted session also shows an empty basket and must not close the window)
     if (c.count === 0 && cartRef.current.count > 0 && /confirm|placed|order|کنفرم|آرڈر/i.test(reply || '') && !/cancel|منسوخ|haven't|not placed/i.test(reply || '')) {
       setOrderMessage(`Order placed — ${Math.round(cartRef.current.total)} rupees, cash on delivery.`);
       orderPlacedRef.current = true;
@@ -241,7 +229,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     if (d.user_text !== undefined) setHeard(d.user_text);
   }
 
-  // ---- voice loop -----------------------------------------------------------
+  // customer ki awaz server ko bhej kar jawab lete hain
   const handleUtterance = async (blob: Blob) => {
     idleCountRef.current = 0;
     setPhase('thinking');
@@ -277,7 +265,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       bargedRef.current = true;
       stopSpeech();
     },
-    // 30 s of silence: repeat the question (twice at most), then just keep listening quietly
     onIdle: () => {
       if (!activeRef.current) return;
       if (idleCountRef.current < 2 && lastAudioRef.current) {
@@ -299,8 +286,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     setPhase('off');
   };
 
-  // Closing the window always stops the microphone and the voice.
-  // self-repair: the screen says "Listening" but the microphone loop is not running (a missed event) -> start it again
+  // agar screen par Listening hai magar mic band hai to dobara chala dete hain
   const phaseNowRef = useRef<VoicePhase>('off');
   phaseNowRef.current = phase;
   useEffect(() => {
@@ -321,6 +307,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   }, [isOpen]);
 
+  // window khulte hi mic on karke greeting shuru
   const startSession = async () => {
     try {
       await voice.open();
@@ -344,7 +331,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       setHeard('');
       setLang((g as any).language ?? null);
       setOptions(g.options ?? null);
-      syncedIdsRef.current = []; // a new voice session starts empty and adds on top of whatever is already in the store cart
+      syncedIdsRef.current = [];
       applyCart(g.cart);
       cartRef.current = g.cart || EMPTY_VOICE_CART;
       setCart(cartRef.current);
@@ -362,7 +349,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   };
 
-  // Start automatically when the window opens (customers pressed the voice button already).
   useEffect(() => {
     if (isOpen && !started && phase === 'off') startSession();
   }, [isOpen]);
@@ -390,6 +376,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   };
 
+  // confirm ya decline button ka kaam
   const runAction = async (action: 'confirm' | 'decline') => {
     setBusy(true);
     try {
@@ -426,7 +413,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         className="relative w-full max-w-5xl max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-3rem)] flex flex-col bg-white rounded-3xl shadow-2xl border border-[#e0f4e7] my-auto overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* title bar */}
         <div className="shrink-0 flex items-center justify-between gap-3 px-4 sm:px-6 py-3 border-b border-[#e0f4e7] bg-gradient-to-r from-[#f3fbf6] to-white">
           <div className="flex items-center gap-2.5 min-w-0">
             <span className="w-9 h-9 rounded-xl bg-white border border-[#e0f4e7] p-1 flex items-center justify-center shrink-0">

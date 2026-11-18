@@ -1,8 +1,3 @@
-// Auto-generated from assanmart_dataset.xlsx by scripts/sync_store.py — 352 products.
-// Fields: id, name, category, subcategory, size, price (null = unavailable), stock (0 = out of stock,
-// null = unknown/available), icon (emoji fallback), image (public path), search (lowercase text incl. brand,
-// Urdu brand and aliases so English + Urdu search both work).
-
 export interface Category {
   name: string;
   icon: string;

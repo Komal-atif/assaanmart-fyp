@@ -11,15 +11,11 @@ interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onLoginSuccess: (user: User) => void;
-  /** language of the voice helper (chosen by the welcome agent) */
   lang?: 'english' | 'urdu';
-  /** the voice helper starts by itself as soon as the form opens (like the photo scanner); can be switched off on screen */
+  /** the voice helper starts by itself as soon as the form opens */
   autoVoice?: boolean;
 }
 
-// Customers sign in with their PHONE NUMBER + password. Behind the scenes Supabase gets a placeholder email made from
-// the number, so nobody has to receive or confirm an email.
-// Set VITE_PHONE_EMAIL_DOMAIN in .env to a domain that has real mail (MX) records; Supabase rejects domains without them.
 const PHONE_DOMAIN = (import.meta.env.VITE_PHONE_EMAIL_DOMAIN as string | undefined) || 'phone.assanmart.pk';
 
 function normalizePhone(raw: string): string {
@@ -47,7 +43,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
   const [loading, setLoading] = useState(false);
   const [locating, setLocating] = useState(false);
 
-  // ---- voice helper (agent asks name -> phone -> address, the form fills itself) ----
+  // voice helper (agent asks name, phone, address, the form fills itself) 
   const [voiceOn, setVoiceOn] = useState(false);
   const [vPhase, setVPhase] = useState<'idle' | 'speaking' | 'listening' | 'thinking'>('idle');
   const [agentText, setAgentText] = useState('');
@@ -115,14 +111,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
         await new Promise((r) => setTimeout(r, 350));
       }
     } catch {
-      /* no voice server: the form still works by typing */
     }
     if (my !== tokenRef.current) return;
     if (listen) await listenNow();
     else setVPhase('idle');
   };
 
-  // what is still missing? (details already known - typed before, or remembered from an earlier try - are never asked again)
   const nextAfter = (done: 'start' | 'name' | 'phone' | 'address'): Exclude<VoiceStep, null> => {
     const v = valuesRef.current;
     const order = ['name', 'phone', 'address'] as const;
@@ -200,7 +194,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
         if (step === 'address') setAddress(r.value);
         return ask(nextAfter(step));
       }
-      // confirm / which
       const r = await formVoiceReply(blob, 'confirm', lang);
       if (!r.heard) return listenNow();
       if (step === 'which' || (r.which && r.action !== 'yes')) {
@@ -255,10 +248,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
     if (!isOpen && (activeRef.current || voiceOn)) stopVoice();
   }, [isOpen]);
 
-  // opened because a guest pressed checkout: the agent starts by itself ("do you have an account?" -> collects the details)
+  // opened because a guest pressed checkout: the agent starts by itself, asking if the customer has an account. If the customer is already logged in.
   useEffect(() => {
     if (!isOpen) return;
-    // details typed or spoken earlier (e.g. before pressing checkout) are shown again and not asked a second time
+    
     try {
       const d = JSON.parse(localStorage.getItem('am_signup_draft') || '{}');
       skippedAddressRef.current = false;
@@ -273,7 +266,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
     }
   }, [isOpen, autoVoice]);
 
-  // ---- "Use my current location" ----
+  // Use my current location
   // pressing the button while the agent is waiting for the address counts as the answer: it moves on to the check
   const applyLocated = (text: string) => {
     setAddress(text);
@@ -352,7 +345,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
     if (voiceOn) stopVoice();
 
     const typed = phone.trim();
-    const isEmail = tab === 'login' && typed.includes('@');   // older accounts made with an email still work
+    const isEmail = tab === 'login' && typed.includes('@');   
     const digits = normalizePhone(typed);
 
     if (!typed || !password) {
